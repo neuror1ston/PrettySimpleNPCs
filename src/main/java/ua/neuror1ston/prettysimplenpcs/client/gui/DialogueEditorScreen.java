@@ -44,17 +44,17 @@ public class DialogueEditorScreen extends Screen {
     private boolean savedNotification = false;
 
     // Graph Map state: Pan & Zoom
-    private int panX = 60;
-    private int panY = 60;
+    private double panX = 60.0;
+    private double panY = 60.0;
     private float zoomScale = 1.0f;
     private boolean isDraggingMap = false;
 
     private String draggingNodeId = null;
 
     public static class NodePoint {
-        public int x;
-        public int y;
-        public NodePoint(int x, int y) { this.x = x; this.y = y; }
+        public double x;
+        public double y;
+        public NodePoint(double x, double y) { this.x = x; this.y = y; }
     }
     private final Map<String, NodePoint> nodePositions = new HashMap<>();
 
@@ -276,8 +276,8 @@ public class DialogueEditorScreen extends Screen {
             String id = newGraphNodeField.getText().trim();
             if (!id.isEmpty() && !tree.getNodes().containsKey(id)) {
                 tree.getNodes().put(id, new DialogueData.Node(id, "Новая реплика..."));
-                int worldCenterX = (int) ((-panX + (width / 2.0f) - 80) / zoomScale);
-                int worldCenterY = (int) ((-panY + (height / 2.0f) - 40) / zoomScale);
+                double worldCenterX = (-panX + (width / 2.0) - 80) / zoomScale;
+                double worldCenterY = (-panY + (height / 2.0) - 40) / zoomScale;
                 nodePositions.put(id, new NodePoint(worldCenterX, worldCenterY));
                 this.selectedNodeId = id;
                 this.init();
@@ -286,8 +286,8 @@ public class DialogueEditorScreen extends Screen {
         this.addDrawableChild(addNodeBtn);
 
         MinimalButton resetViewBtn = MinimalButton.builder(Text.literal("Центрировать"), button -> {
-            this.panX = 60;
-            this.panY = 60;
+            this.panX = 60.0;
+            this.panY = 60.0;
             this.zoomScale = 1.0f;
         }).dimensions(225, barY, 85, 16).build();
         this.addDrawableChild(resetViewBtn);
@@ -483,7 +483,7 @@ public class DialogueEditorScreen extends Screen {
         // Persist node layout coordinates in the tree data
         tree.getNodePositions().clear();
         for (Map.Entry<String, NodePoint> entry : nodePositions.entrySet()) {
-            tree.getNodePositions().put(entry.getKey(), new int[]{entry.getValue().x, entry.getValue().y});
+            tree.getNodePositions().put(entry.getKey(), new int[]{(int) Math.round(entry.getValue().x), (int) Math.round(entry.getValue().y)});
         }
 
         PacketByteBuf buf = new PacketByteBuf(Unpooled.buffer());
@@ -505,8 +505,8 @@ public class DialogueEditorScreen extends Screen {
                 DialogueData.Node node = entry.getValue();
                 NodePoint np = nodePositions.computeIfAbsent(id, k -> new NodePoint(60, 60));
 
-                int sx = np.x;
-                int sy = np.y;
+                double sx = np.x;
+                double sy = np.y;
                 int cardH = Math.max(68, 44 + Math.min(4, node.getChoices().size()) * 12);
 
                 if (worldMouseX >= sx && worldMouseX <= sx + cardW && worldMouseY >= sy && worldMouseY <= sy + cardH) {
@@ -529,17 +529,26 @@ public class DialogueEditorScreen extends Screen {
                         return true;
                     }
 
-                    // Card dragging
+                    // Card dragging with Left mouse button
                     if (button == 0) {
-                        draggingNodeId = id;
+                        this.draggingNodeId = id;
+                        this.setDragging(true);
+                        return true;
+                    }
+
+                    // Right or middle click on card can pan the map
+                    if (button == 1 || button == 2) {
+                        this.isDraggingMap = true;
+                        this.setDragging(true);
                         return true;
                     }
                 }
             }
 
-            // Clicked empty canvas: start smooth panning
+            // Clicked empty canvas: start smooth panning with any button
             if (button == 0 || button == 1 || button == 2) {
-                isDraggingMap = true;
+                this.isDraggingMap = true;
+                this.setDragging(true);
                 return true;
             }
         } else if (activeMode == 1) {
@@ -617,8 +626,8 @@ public class DialogueEditorScreen extends Screen {
             float oldZoom = zoomScale;
             float factor = amount > 0 ? 1.15f : 0.87f;
             zoomScale = Math.max(0.35f, Math.min(2.5f, zoomScale * factor));
-            panX = (int) (mouseX - (mouseX - panX) * (zoomScale / oldZoom));
-            panY = (int) (mouseY - (mouseY - panY) * (zoomScale / oldZoom));
+            panX = mouseX - (mouseX - panX) * (zoomScale / oldZoom);
+            panY = mouseY - (mouseY - panY) * (zoomScale / oldZoom);
             return true;
         } else if (activeMode == 1) {
             int canvasX = 14;
@@ -659,13 +668,13 @@ public class DialogueEditorScreen extends Screen {
             if (draggingNodeId != null) {
                 NodePoint np = nodePositions.get(draggingNodeId);
                 if (np != null) {
-                    np.x += (int) (deltaX / zoomScale);
-                    np.y += (int) (deltaY / zoomScale);
+                    np.x += deltaX / zoomScale;
+                    np.y += deltaY / zoomScale;
                     return true;
                 }
             } else if (isDraggingMap) {
-                panX += (int) deltaX;
-                panY += (int) deltaY;
+                panX += deltaX;
+                panY += deltaY;
                 return true;
             }
         }
@@ -676,6 +685,7 @@ public class DialogueEditorScreen extends Screen {
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         this.draggingNodeId = null;
         this.isDraggingMap = false;
+        this.setDragging(false);
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
@@ -708,15 +718,15 @@ public class DialogueEditorScreen extends Screen {
         context.enableScissor(0, mapTop, this.width, mapBottom);
 
         context.getMatrices().push();
-        context.getMatrices().translate(panX, panY, 0);
+        context.getMatrices().translate((float) panX, (float) panY, 0);
         context.getMatrices().scale(zoomScale, zoomScale, 1.0f);
 
         // 1. Render subtle coordinate grid dots in canvas space
         int gridStep = 40;
-        int minCanvasX = (int) ((-panX) / zoomScale) - 40;
-        int maxCanvasX = (int) ((this.width - panX) / zoomScale) + 40;
-        int minCanvasY = (int) ((mapTop - panY) / zoomScale) - 40;
-        int maxCanvasY = (int) ((mapBottom - panY) / zoomScale) + 40;
+        int minCanvasX = (int) Math.floor((-panX) / zoomScale) - 40;
+        int maxCanvasX = (int) Math.ceil((this.width - panX) / zoomScale) + 40;
+        int minCanvasY = (int) Math.floor((mapTop - panY) / zoomScale) - 40;
+        int maxCanvasY = (int) Math.ceil((mapBottom - panY) / zoomScale) + 40;
 
         int startX = (minCanvasX / gridStep) * gridStep;
         int startY = (minCanvasY / gridStep) * gridStep;
@@ -732,11 +742,11 @@ public class DialogueEditorScreen extends Screen {
         for (Map.Entry<String, DialogueData.Node> entry : tree.getNodes().entrySet()) {
             DialogueData.Node node = entry.getValue();
             NodePoint np = nodePositions.computeIfAbsent(node.getId(), k -> new NodePoint(60, 60));
-            int fromX = np.x + cardW;
+            int fromX = (int) Math.round(np.x) + cardW;
 
             for (int i = 0; i < node.getChoices().size(); i++) {
                 DialogueData.Choice c = node.getChoices().get(i);
-                int fromY = np.y + 36 + (Math.min(i, 4) * 12);
+                int fromY = (int) Math.round(np.y) + 36 + (Math.min(i, 4) * 12);
 
                 String targetId = c.getTargetNodeId();
                 if ("EXIT".equalsIgnoreCase(targetId) || targetId.isEmpty()) {
@@ -744,8 +754,8 @@ public class DialogueEditorScreen extends Screen {
                     context.drawText(this.textRenderer, "§c[ВЫХОД]", fromX + 18, fromY - 4, 0xEE6666, false);
                 } else if (nodePositions.containsKey(targetId)) {
                     NodePoint targetNp = nodePositions.get(targetId);
-                    int toX = targetNp.x;
-                    int toY = targetNp.y + 16;
+                    int toX = (int) Math.round(targetNp.x);
+                    int toY = (int) Math.round(targetNp.y) + 16;
                     drawConnectionLine(context, fromX, fromY, toX, toY);
                 }
             }
@@ -757,8 +767,8 @@ public class DialogueEditorScreen extends Screen {
             DialogueData.Node node = entry.getValue();
             NodePoint np = nodePositions.computeIfAbsent(id, k -> new NodePoint(60, 60));
 
-            int sx = np.x;
-            int sy = np.y;
+            int sx = (int) Math.round(np.x);
+            int sy = (int) Math.round(np.y);
             int cardH = Math.max(68, 44 + Math.min(4, node.getChoices().size()) * 12);
             boolean isSelected = id.equals(selectedNodeId);
             boolean isStart = id.equals(tree.getStartNodeId()) || "start".equalsIgnoreCase(id);
