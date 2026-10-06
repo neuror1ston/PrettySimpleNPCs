@@ -45,6 +45,7 @@ public class DialogueScreen extends Screen {
     private final String dialogueId;
     private final String dialogueTitle;
     private final String npcName;
+    private String currentNodeId;
 
     private String fullText;
     private final List<ChoiceEntry> choices = new ArrayList<>();
@@ -117,17 +118,27 @@ public class DialogueScreen extends Screen {
     }
 
     public DialogueScreen(int entityId, String dialogueId, String dialogueTitle, String npcName, String startText, List<ChoiceEntry> choices) {
+        this(entityId, dialogueId, dialogueTitle, npcName, "start", startText, choices);
+    }
+
+    public DialogueScreen(int entityId, String dialogueId, String dialogueTitle, String npcName, String currentNodeId, String startText, List<ChoiceEntry> choices) {
         super(Text.literal(dialogueTitle));
         this.entityId = entityId;
         this.dialogueId = dialogueId;
         this.dialogueTitle = dialogueTitle;
         this.npcName = npcName;
+        this.currentNodeId = (currentNodeId != null && !currentNodeId.isEmpty()) ? currentNodeId : "start";
         this.fullText = startText;
         this.choices.addAll(choices);
         this.conversationHistory.add(new HistoryEntry(npcName, NPC_COLOR, startText, false));
     }
 
     public void updateNode(String newText, List<ChoiceEntry> newChoices) {
+        updateNode(this.currentNodeId, newText, newChoices);
+    }
+
+    public void updateNode(String nodeId, String newText, List<ChoiceEntry> newChoices) {
+        this.currentNodeId = (nodeId != null && !nodeId.isEmpty()) ? nodeId : this.currentNodeId;
         this.fullText = newText;
         this.choices.clear();
         this.choices.addAll(newChoices);
@@ -250,17 +261,20 @@ public class DialogueScreen extends Screen {
     }
 
     private void sendChoice(String targetNodeId, int choiceIndex) {
-        if ("EXIT".equalsIgnoreCase(targetNodeId) || targetNodeId.isEmpty()) {
-            this.close();
-            return;
-        }
+        boolean isExit = "EXIT".equalsIgnoreCase(targetNodeId) || targetNodeId == null || targetNodeId.isEmpty();
+        boolean isTrade = "trade".equalsIgnoreCase(targetNodeId) || "OPEN_TRADE".equalsIgnoreCase(targetNodeId) || "shop".equalsIgnoreCase(targetNodeId);
 
         PacketByteBuf buf = new PacketByteBuf(Unpooled.buffer());
         buf.writeInt(entityId);
         buf.writeString(dialogueId);
-        buf.writeString(targetNodeId);
+        buf.writeString(currentNodeId != null ? currentNodeId : "start");
+        buf.writeString(targetNodeId != null ? targetNodeId : "EXIT");
         buf.writeInt(choiceIndex);
         ClientPlayNetworking.send(NpcNetwork.DIALOGUE_CHOICE_C2S, buf);
+
+        if (isExit || isTrade) {
+            this.close();
+        }
     }
 
     @Override

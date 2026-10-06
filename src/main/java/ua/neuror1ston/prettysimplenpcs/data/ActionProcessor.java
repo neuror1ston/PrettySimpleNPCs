@@ -113,9 +113,7 @@ public class ActionProcessor {
                 }
             }
             case OPEN_TRADE -> {
-                if (npc != null) {
-                    NpcNetwork.sendOpenTradeToClient(player, npc);
-                }
+                NpcNetwork.sendOpenTradeToClient(player, npc, val);
             }
         }
     }

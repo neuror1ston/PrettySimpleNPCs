@@ -749,9 +749,18 @@ public class DialogueEditorScreen extends Screen {
                 int fromY = (int) Math.round(np.y) + 36 + (Math.min(i, 4) * 12);
 
                 String targetId = c.getTargetNodeId();
+                boolean hasTradeAction = c.getActions().stream().anyMatch(a -> a.getType() == DialogueData.Action.ActionType.OPEN_TRADE);
                 if ("EXIT".equalsIgnoreCase(targetId) || targetId.isEmpty()) {
-                    context.fill(fromX, fromY - 1, fromX + 16, fromY + 1, 0xFF993333);
-                    context.drawText(this.textRenderer, "§c[ВЫХОД]", fromX + 18, fromY - 4, 0xEE6666, false);
+                    if (hasTradeAction) {
+                        context.fill(fromX, fromY - 1, fromX + 16, fromY + 1, 0xFF338833);
+                        context.drawText(this.textRenderer, "§a[ТОРГОВЛЯ]", fromX + 18, fromY - 4, 0x88EE88, false);
+                    } else {
+                        context.fill(fromX, fromY - 1, fromX + 16, fromY + 1, 0xFF993333);
+                        context.drawText(this.textRenderer, "§c[ВЫХОД]", fromX + 18, fromY - 4, 0xEE6666, false);
+                    }
+                } else if ("trade".equalsIgnoreCase(targetId) || "OPEN_TRADE".equalsIgnoreCase(targetId) || "shop".equalsIgnoreCase(targetId) || hasTradeAction) {
+                    context.fill(fromX, fromY - 1, fromX + 16, fromY + 1, 0xFF338833);
+                    context.drawText(this.textRenderer, "§a[ТОРГОВЛЯ]", fromX + 18, fromY - 4, 0x88EE88, false);
                 } else if (nodePositions.containsKey(targetId)) {
                     NodePoint targetNp = nodePositions.get(targetId);
                     int toX = (int) Math.round(targetNp.x);

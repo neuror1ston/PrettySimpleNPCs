@@ -74,9 +74,9 @@ public class ClientNetwork {
 
             client.execute(() -> {
                 if (client.currentScreen instanceof DialogueScreen activeScreen) {
-                    activeScreen.updateNode(text, choices);
+                    activeScreen.updateNode(nodeId, text, choices);
                 } else {
-                    client.setScreen(new DialogueScreen(entityId, dialogueId, dialogueTitle, npcName, text, choices));
+                    client.setScreen(new DialogueScreen(entityId, dialogueId, dialogueTitle, npcName, nodeId, text, choices));
                 }
             });
         });

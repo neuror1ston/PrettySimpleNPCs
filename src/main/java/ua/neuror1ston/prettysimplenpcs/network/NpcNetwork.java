@@ -152,6 +152,7 @@ public class NpcNetwork {
         ServerPlayNetworking.registerGlobalReceiver(DIALOGUE_CHOICE_C2S, (server, player, handler, buf, responseSender) -> {
             int entityId = buf.readInt();
             String dialogueId = buf.readString(256);
+            String currentNodeId = buf.readString(256);
             String targetNodeId = buf.readString(256);
             int choiceIndex = buf.readInt();
 
@@ -162,20 +163,60 @@ public class NpcNetwork {
                 DialogueData.Tree tree = NpcJsonStorage.getDialogue(dialogueId);
                 if (tree == null) return;
 
-                if ("EXIT".equalsIgnoreCase(targetNodeId) || targetNodeId.isEmpty()) {
-                    // Close dialogue
+                boolean openedTrade = false;
+
+                // 1. Retrieve the clicked choice from the current node
+                DialogueData.Node currentNode = tree.getNode(currentNodeId);
+                DialogueData.Choice clickedChoice = null;
+                if (currentNode != null) {
+                    List<DialogueData.Choice> validChoices = currentNode.getChoices().stream()
+                            .filter(c -> isChoiceAvailable(player, c))
+                            .toList();
+                    if (choiceIndex >= 0 && choiceIndex < validChoices.size()) {
+                        clickedChoice = validChoices.get(choiceIndex);
+                    } else if (choiceIndex >= 0 && choiceIndex < currentNode.getChoices().size()) {
+                        clickedChoice = currentNode.getChoices().get(choiceIndex);
+                    }
+                }
+
+                // 2. Execute any actions attached directly to this choice
+                if (clickedChoice != null) {
+                    for (DialogueData.Action act : clickedChoice.getActions()) {
+                        if (act.getType() == DialogueData.Action.ActionType.OPEN_TRADE) {
+                            openedTrade = true;
+                        }
+                        ActionProcessor.executeAction(act, player, npc);
+                    }
+                }
+
+                // 3. Special targetNodeId hooks: "trade", "OPEN_TRADE", or "shop"
+                if (!openedTrade && ("trade".equalsIgnoreCase(targetNodeId) || "OPEN_TRADE".equalsIgnoreCase(targetNodeId) || "shop".equalsIgnoreCase(targetNodeId))) {
+                    if (tree.getNode(targetNodeId) == null) {
+                        ActionProcessor.executeAction(new DialogueData.Action(DialogueData.Action.ActionType.OPEN_TRADE, ""), player, npc);
+                        openedTrade = true;
+                    }
+                }
+
+                // 4. If trade was opened, or if exiting dialogue, stop here (do not send dialogue update)
+                if (openedTrade || "EXIT".equalsIgnoreCase(targetNodeId) || targetNodeId.isEmpty()) {
                     return;
                 }
 
+                // 5. Navigate to the target node
                 DialogueData.Node nextNode = tree.getNode(targetNodeId);
                 if (nextNode != null) {
                     // Execute enter actions for the new node
                     for (DialogueData.Action act : nextNode.getEnterActions()) {
+                        if (act.getType() == DialogueData.Action.ActionType.OPEN_TRADE) {
+                            openedTrade = true;
+                        }
                         ActionProcessor.executeAction(act, player, npc);
                     }
 
-                    // Send updated node back to client
-                    sendDialogueNodeUpdate(player, entityId, tree, nextNode);
+                    // Only send dialogue update if trade was NOT opened by enter actions
+                    if (!openedTrade) {
+                        sendDialogueNodeUpdate(player, entityId, tree, nextNode);
+                    }
                 }
             });
         });
@@ -369,14 +410,34 @@ public class NpcNetwork {
     }
 
     public static void sendOpenTradeToClient(ServerPlayerEntity player, SimpleNpcEntity npc) {
-        NpcData data = npc.getNpcData();
-        if (data == null || data.getTradeMatrixId().isEmpty()) return;
+        sendOpenTradeToClient(player, npc, "");
+    }
 
-        TradeData.TradeMatrix matrix = NpcJsonStorage.getTradeMatrix(data.getTradeMatrixId());
-        if (matrix == null) return;
+    public static void sendOpenTradeToClient(ServerPlayerEntity player, SimpleNpcEntity npc, String tradeMatrixIdOverride) {
+        String targetMatrixId = (tradeMatrixIdOverride != null && !tradeMatrixIdOverride.trim().isEmpty())
+                ? tradeMatrixIdOverride.trim()
+                : (npc != null && npc.getNpcData() != null ? npc.getNpcData().getTradeMatrixId() : "");
+
+        TradeData.TradeMatrix matrix = null;
+        if (!targetMatrixId.isEmpty()) {
+            matrix = NpcJsonStorage.getTradeMatrix(targetMatrixId);
+        }
+        if (matrix == null && npc != null && npc.getNpcData() != null && !npc.getNpcData().getTradeMatrixId().isEmpty()) {
+            matrix = NpcJsonStorage.getTradeMatrix(npc.getNpcData().getTradeMatrixId());
+        }
+        if (matrix == null) {
+            matrix = NpcJsonStorage.getTradeMatrix("default_trades");
+        }
+        if (matrix == null && !NpcJsonStorage.getAllTrades().isEmpty()) {
+            matrix = NpcJsonStorage.getAllTrades().iterator().next();
+        }
+        if (matrix == null) {
+            player.sendMessage(Text.literal("§c[Торговля] У этого NPC нет товаров для продажи."), false);
+            return;
+        }
 
         PacketByteBuf buf = PacketByteBufs.create();
-        buf.writeInt(npc.getId());
+        buf.writeInt(npc != null ? npc.getId() : -1);
         buf.writeString(matrix.getId());
         buf.writeString(matrix.getTitle());
 
