@@ -27,8 +27,9 @@ import java.util.*;
  *    - Instant open/edit on double click or button.
  * 2. Giant Multi-line Writing Canvas (Полотно реплики):
  *    - Full-screen multi-line text editor for writing long speeches.
- *    - Instant formatting toolbar (Bold, Italic, Placeholders, Colors).
- *    - Choices & Actions manager for the node.
+ *    - Compact formatting toolbar (Bold, Italic, Placeholders, Colors).
+ *    - Responsive scrollable choices manager with compact add-row at bottom.
+ *    - Responsive scrollable actions manager.
  */
 public class DialogueEditorScreen extends Screen {
     private final DialogueData.Tree tree;
@@ -64,6 +65,9 @@ public class DialogueEditorScreen extends Screen {
     private TextFieldWidget newChoiceTargetField;
     private TextFieldWidget actionValField;
     private DialogueData.Action.ActionType selectedActionType = DialogueData.Action.ActionType.CONSOLE_COMMAND;
+
+    private int choicesScrollOffset = 0;
+    private int actionsScrollOffset = 0;
 
     // Graph Map mode widgets
     private TextFieldWidget newGraphNodeField;
@@ -172,14 +176,14 @@ public class DialogueEditorScreen extends Screen {
         MinimalButton graphTabBtn = MinimalButton.builder(Text.literal("КАРТА ГРАФА"), button -> {
             this.activeMode = 0;
             this.init();
-        }).dimensions(110, 6, 110, 18).build();
+        }).dimensions(108, 6, 105, 18).build();
         graphTabBtn.setActiveState(activeMode == 0);
         this.addDrawableChild(graphTabBtn);
 
         MinimalButton canvasTabBtn = MinimalButton.builder(Text.literal("ПОЛОТНО РЕПЛИКИ"), button -> {
             this.activeMode = 1;
             this.init();
-        }).dimensions(225, 6, 125, 18).build();
+        }).dimensions(218, 6, 120, 18).build();
         canvasTabBtn.setActiveState(activeMode == 1);
         this.addDrawableChild(canvasTabBtn);
 
@@ -187,7 +191,7 @@ public class DialogueEditorScreen extends Screen {
         MinimalButton saveBtn = MinimalButton.builder(Text.literal("Сохранить"), button -> {
             saveDialogueToServer();
             savedNotification = true;
-        }).dimensions(this.width - 105, 6, 95, 18).build();
+        }).dimensions(this.width - 100, 6, 90, 18).build();
         saveBtn.setCustomBorderColor(0xFF227722);
         this.addDrawableChild(saveBtn);
     }
@@ -222,49 +226,56 @@ public class DialogueEditorScreen extends Screen {
         DialogueData.Node currentNode = tree.getNode(selectedNodeId);
         if (currentNode == null) return;
 
-        int canvasX = 20;
-        int canvasW = this.width - 40;
+        int canvasX = 14;
+        int canvasW = this.width - 28;
 
-        // Toolbar row 1: Formatting and placeholders
-        int tbY = 30;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("Жирный"), b -> insertFormat("§l"))
-                .dimensions(canvasX, tbY, 48, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("Курсив"), b -> insertFormat("§o"))
-                .dimensions(canvasX + 52, tbY, 48, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("%player%"), b -> insertFormat("%player%"))
-                .dimensions(canvasX + 104, tbY, 60, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("%npc%"), b -> insertFormat("%npc_name%"))
-                .dimensions(canvasX + 168, tbY, 48, 16).build());
+        // Toolbar row: Formatting and placeholders (compact buttons to prevent overflow)
+        int tbY = 28;
+        int curX = canvasX;
 
-        // Toolbar row 2: Color swatches
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§6ЗОЛ"), b -> insertFormat("§6"))
-                .dimensions(canvasX + 224, tbY, 28, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§eЖЕЛ"), b -> insertFormat("§e"))
-                .dimensions(canvasX + 254, tbY, 28, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§aЗЕЛ"), b -> insertFormat("§a"))
-                .dimensions(canvasX + 284, tbY, 28, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§cКРА"), b -> insertFormat("§c"))
-                .dimensions(canvasX + 314, tbY, 28, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§7СЕР"), b -> insertFormat("§7"))
-                .dimensions(canvasX + 344, tbY, 28, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§fБЕЛ"), b -> insertFormat("§f"))
-                .dimensions(canvasX + 374, tbY, 28, 16).build());
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§cСБР"), b -> insertFormat("§r"))
-                .dimensions(canvasX + 404, tbY, 28, 16).build());
+        // B & I
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§lB"), b -> insertFormat("§l")).dimensions(curX, tbY, 20, 16).build());
+        curX += 22;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§oI"), b -> insertFormat("§o")).dimensions(curX, tbY, 20, 16).build());
+        curX += 24;
 
-        // Node Quick Switcher
+        // Placeholders
+        this.addDrawableChild(MinimalButton.builder(Text.literal("%player%"), b -> insertFormat("%player%")).dimensions(curX, tbY, 52, 16).build());
+        curX += 54;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("%npc%"), b -> insertFormat("%npc_name%")).dimensions(curX, tbY, 40, 16).build());
+        curX += 44;
+
+        // Colors
+        int colBtnW = 18;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§6●"), b -> insertFormat("§6")).dimensions(curX, tbY, colBtnW, 16).build());
+        curX += colBtnW + 2;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§e●"), b -> insertFormat("§e")).dimensions(curX, tbY, colBtnW, 16).build());
+        curX += colBtnW + 2;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§a●"), b -> insertFormat("§a")).dimensions(curX, tbY, colBtnW, 16).build());
+        curX += colBtnW + 2;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§c●"), b -> insertFormat("§c")).dimensions(curX, tbY, colBtnW, 16).build());
+        curX += colBtnW + 2;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§7●"), b -> insertFormat("§7")).dimensions(curX, tbY, colBtnW, 16).build());
+        curX += colBtnW + 2;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§f●"), b -> insertFormat("§f")).dimensions(curX, tbY, colBtnW, 16).build());
+        curX += colBtnW + 2;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("§c✕"), b -> insertFormat("§r")).dimensions(curX, tbY, colBtnW, 16).build());
+
+        // Node Quick Switcher (Right aligned)
+        int nodeBtnW = 120;
+        int nodeBtnX = canvasX + canvasW - nodeBtnW;
         MinimalButton nodeSwitchBtn = MinimalButton.builder(Text.literal("Узел: " + selectedNodeId), button -> {
             List<String> keys = new ArrayList<>(tree.getNodes().keySet());
             int idx = keys.indexOf(selectedNodeId);
             selectedNodeId = keys.get((idx + 1) % keys.size());
             this.init();
-        }).dimensions(this.width - 150, tbY, 130, 16).build();
+        }).dimensions(nodeBtnX, tbY, nodeBtnW, 16).build();
         this.addDrawableChild(nodeSwitchBtn);
 
-        // GIANT Multi-line Writing Canvas
+        // Multi-line Writing Canvas
         int canvasY = tbY + 20;
-        int bottomSectionH = 110;
-        int canvasH = Math.max(60, this.height - canvasY - bottomSectionH - 12);
+        int bottomSectionH = Math.min(130, Math.max(92, (int) (this.height * 0.40f)));
+        int canvasH = Math.max(50, this.height - canvasY - bottomSectionH - 12);
 
         this.canvasEditBox = new EditBoxWidget(this.textRenderer, canvasX, canvasY, canvasW, canvasH,
                 Text.literal("Введите реплику персонажа..."), Text.literal("Реплика"));
@@ -275,82 +286,74 @@ public class DialogueEditorScreen extends Screen {
 
         // Bottom Section: Choices (Left) and Actions (Right)
         int bottomY = canvasY + canvasH + 8;
-        int halfW = (canvasW - 14) / 2;
+        int halfW = (canvasW - 10) / 2;
 
         // Left: Choices List & Add Choice
-        initChoicesSection(canvasX, bottomY, halfW, currentNode);
+        initChoicesSection(canvasX, bottomY, halfW, bottomSectionH, currentNode);
 
         // Right: Actions List & Add Action
-        initActionsSection(canvasX + halfW + 14, bottomY, halfW, currentNode);
+        initActionsSection(canvasX + halfW + 10, bottomY, halfW, bottomSectionH, currentNode);
     }
 
-    private void initChoicesSection(int x, int y, int w, DialogueData.Node currentNode) {
-        int listY = y + 14;
-        int maxShown = Math.min(2, currentNode.getChoices().size());
+    private void initChoicesSection(int x, int y, int w, int h, DialogueData.Node currentNode) {
+        int addY = y + h - 20;
 
-        for (int i = 0; i < maxShown; i++) {
-            DialogueData.Choice c = currentNode.getChoices().get(i);
-            final int idx = i;
-            int rowY = listY + (i * 20);
-
-            // Choice summary preview button
-            String choiceLabel = (i + 1) + ". " + c.getText() + " -> [" + c.getTargetNodeId() + "]";
-            MinimalButton prevBtn = MinimalButton.builder(Text.literal(choiceLabel), b -> {})
-                    .dimensions(x, rowY, w - 24, 18).build();
-            this.addDrawableChild(prevBtn);
-
-            // Delete choice [X]
-            MinimalButton delBtn = MinimalButton.builder(Text.literal("X"), b -> {
-                if (idx < currentNode.getChoices().size()) {
-                    currentNode.getChoices().remove(idx);
-                    this.init();
-                }
-            }).dimensions(x + w - 20, rowY, 18, 18).build();
-            delBtn.setCustomBorderColor(0xFF662222);
-            this.addDrawableChild(delBtn);
+        this.newChoiceTextField = new TextFieldWidget(this.textRenderer, x + 4, addY, w - 86, 16, Text.literal("Текст"));
+        this.newChoiceTextField.setPlaceholder(Text.literal("Текст ответа..."));
+        if (this.newChoiceTextField.getText().isEmpty()) {
+            this.newChoiceTextField.setText("Далее");
         }
-
-        int addY = y + 56;
-        this.newChoiceTextField = new TextFieldWidget(this.textRenderer, x, addY, w - 74, 16, Text.literal("Текст"));
-        this.newChoiceTextField.setText("Далее");
         this.addSelectableChild(this.newChoiceTextField);
 
-        this.newChoiceTargetField = new TextFieldWidget(this.textRenderer, x + w - 70, addY, 70, 16, Text.literal("Куда"));
-        this.newChoiceTargetField.setText("EXIT");
+        this.newChoiceTargetField = new TextFieldWidget(this.textRenderer, x + w - 80, addY, 54, 16, Text.literal("Куда"));
+        this.newChoiceTargetField.setPlaceholder(Text.literal("EXIT"));
+        if (this.newChoiceTargetField.getText().isEmpty()) {
+            this.newChoiceTargetField.setText("EXIT");
+        }
         this.addSelectableChild(this.newChoiceTargetField);
 
-        MinimalButton addChoiceBtn = MinimalButton.builder(Text.literal("+ Добавить ответ"), b -> {
+        MinimalButton addChoiceBtn = MinimalButton.builder(Text.literal("+"), b -> {
             String ct = newChoiceTextField.getText().trim();
             String tg = newChoiceTargetField.getText().trim();
             if (!ct.isEmpty()) {
                 currentNode.getChoices().add(new DialogueData.Choice(ct, tg.isEmpty() ? "EXIT" : tg));
-                newChoiceTextField.setText("Ответ");
+                newChoiceTextField.setText("");
+                newChoiceTargetField.setText("EXIT");
+                int listH = (h - 22) - 16;
+                choicesScrollOffset = Math.max(0, currentNode.getChoices().size() * 18 - listH);
                 this.init();
             }
-        }).dimensions(x, addY + 20, w, 16).build();
+        }).dimensions(x + w - 24, addY, 20, 16).build();
+        addChoiceBtn.setCustomBorderColor(0xFF338833);
         this.addDrawableChild(addChoiceBtn);
     }
 
-    private void initActionsSection(int x, int y, int w, DialogueData.Node currentNode) {
-        MinimalButton actTypeBtn = MinimalButton.builder(Text.literal(formatActionTypeName(selectedActionType)), b -> {
+    private void initActionsSection(int x, int y, int w, int h, DialogueData.Node currentNode) {
+        int addY = y + h - 20;
+
+        MinimalButton actTypeBtn = MinimalButton.builder(Text.literal(formatActionTypeNameShort(selectedActionType)), b -> {
             DialogueData.Action.ActionType[] types = DialogueData.Action.ActionType.values();
             int next = (selectedActionType.ordinal() + 1) % types.length;
             selectedActionType = types[next];
-            b.setMessage(Text.literal(formatActionTypeName(selectedActionType)));
-        }).dimensions(x, y + 14, w, 16).build();
+            b.setMessage(Text.literal(formatActionTypeNameShort(selectedActionType)));
+        }).dimensions(x + 4, addY, 74, 16).build();
         this.addDrawableChild(actTypeBtn);
 
-        this.actionValField = new TextFieldWidget(this.textRenderer, x, y + 34, w - 28, 16, Text.literal("Значение"));
-        this.actionValField.setText("playsound ...");
+        this.actionValField = new TextFieldWidget(this.textRenderer, x + 80, addY, w - 106, 16, Text.literal("Значение"));
+        this.actionValField.setPlaceholder(Text.literal("playsound ..."));
         this.addSelectableChild(this.actionValField);
 
         MinimalButton addActionBtn = MinimalButton.builder(Text.literal("+"), b -> {
             String val = actionValField.getText().trim();
             if (!val.isEmpty()) {
                 currentNode.getEnterActions().add(new DialogueData.Action(selectedActionType, val));
+                actionValField.setText("");
+                int listH = (h - 22) - 16;
+                actionsScrollOffset = Math.max(0, currentNode.getEnterActions().size() * 18 - listH);
                 this.init();
             }
-        }).dimensions(x + w - 24, y + 34, 24, 16).build();
+        }).dimensions(x + w - 24, addY, 20, 16).build();
+        addActionBtn.setCustomBorderColor(0xFF338833);
         this.addDrawableChild(addActionBtn);
     }
 
@@ -366,16 +369,16 @@ public class DialogueEditorScreen extends Screen {
         }
     }
 
-    private String formatActionTypeName(DialogueData.Action.ActionType type) {
+    private String formatActionTypeNameShort(DialogueData.Action.ActionType type) {
         return switch (type) {
-            case CONSOLE_COMMAND -> "Команда консоли";
-            case PLAYER_COMMAND -> "Команда игрока";
-            case GIVE_ITEM -> "Выдать предмет";
-            case TAKE_ITEM -> "Забрать предмет";
-            case PLAY_SOUND -> "Звуковой эффект";
-            case SET_FLAG -> "Записать флаг";
-            case REMOVE_FLAG -> "Снять флаг";
-            case OPEN_TRADE -> "Открыть торговлю";
+            case CONSOLE_COMMAND -> "Консоль";
+            case PLAYER_COMMAND -> "Команда";
+            case GIVE_ITEM -> "Выдать";
+            case TAKE_ITEM -> "Забрать";
+            case PLAY_SOUND -> "Звук";
+            case SET_FLAG -> "+Флаг";
+            case REMOVE_FLAG -> "-Флаг";
+            case OPEN_TRADE -> "Торговля";
         };
     }
 
@@ -385,7 +388,7 @@ public class DialogueEditorScreen extends Screen {
         ClientPlayNetworking.send(NpcNetwork.SAVE_DIALOGUE_C2S, buf);
     }
 
-    // --- Interactive Mouse Handlers for Graph Map ---
+    // --- Interactive Mouse Handlers ---
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
@@ -400,7 +403,7 @@ public class DialogueEditorScreen extends Screen {
 
                 int sx = panX + np.x;
                 int sy = panY + np.y;
-                int cardH = Math.max(68, 44 + Math.min(3, node.getChoices().size()) * 12);
+                int cardH = Math.max(68, 44 + Math.min(4, node.getChoices().size()) * 12);
 
                 if (mouseX >= sx && mouseX <= sx + cardW && mouseY >= sy && mouseY <= sy + cardH) {
                     this.selectedNodeId = id;
@@ -438,9 +441,107 @@ public class DialogueEditorScreen extends Screen {
                 lastDragMouseY = mouseY;
                 return true;
             }
+        } else if (activeMode == 1) {
+            DialogueData.Node currentNode = tree.getNode(selectedNodeId);
+            if (currentNode != null) {
+                int canvasX = 14;
+                int canvasW = this.width - 28;
+                int bottomSectionH = Math.min(130, Math.max(92, (int) (this.height * 0.40f)));
+                int canvasH = Math.max(50, this.height - 48 - bottomSectionH - 12);
+                int bottomY = 48 + canvasH + 8;
+                int halfW = (canvasW - 10) / 2;
+
+                int choicesX = canvasX;
+                int choicesListY = bottomY + 16;
+                int choicesListH = bottomSectionH - 38;
+
+                // 1. Check clicks inside Choices list
+                if (mouseX >= choicesX + 4 && mouseX <= choicesX + halfW - 4 && mouseY >= choicesListY && mouseY <= choicesListY + choicesListH) {
+                    for (int i = 0; i < currentNode.getChoices().size(); i++) {
+                        int rowY = choicesListY + (i * 18) - choicesScrollOffset;
+                        if (mouseY >= rowY && mouseY < rowY + 16) {
+                            // Check delete button [X]
+                            if (mouseX >= choicesX + halfW - 22 && mouseX <= choicesX + halfW - 10 && mouseY >= rowY + 2 && mouseY <= rowY + 14) {
+                                currentNode.getChoices().remove(i);
+                                this.init();
+                                return true;
+                            }
+                            // Clicked row: populate text fields for editing
+                            DialogueData.Choice c = currentNode.getChoices().get(i);
+                            if (newChoiceTextField != null) newChoiceTextField.setText(c.getText());
+                            if (newChoiceTargetField != null) newChoiceTargetField.setText(c.getTargetNodeId());
+                            return true;
+                        }
+                    }
+                }
+
+                // 2. Check clicks inside Actions list
+                int actionsX = canvasX + halfW + 10;
+                int actListY = bottomY + 16;
+                int actListH = bottomSectionH - 38;
+
+                if (mouseX >= actionsX + 4 && mouseX <= actionsX + halfW - 4 && mouseY >= actListY && mouseY <= actListY + actListH) {
+                    for (int j = 0; j < currentNode.getEnterActions().size(); j++) {
+                        int rowY = actListY + (j * 18) - actionsScrollOffset;
+                        if (mouseY >= rowY && mouseY < rowY + 16) {
+                            // Check delete button [X]
+                            if (mouseX >= actionsX + halfW - 22 && mouseX <= actionsX + halfW - 10 && mouseY >= rowY + 2 && mouseY <= rowY + 14) {
+                                currentNode.getEnterActions().remove(j);
+                                this.init();
+                                return true;
+                            }
+                            // Clicked row: populate value field
+                            DialogueData.Action a = currentNode.getEnterActions().get(j);
+                            if (actionValField != null) actionValField.setText(a.getValue());
+                            selectedActionType = a.getType();
+                            this.init();
+                            return true;
+                        }
+                    }
+                }
+            }
         }
 
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        if (activeMode == 1) {
+            int canvasX = 14;
+            int canvasW = this.width - 28;
+            int bottomSectionH = Math.min(130, Math.max(92, (int) (this.height * 0.40f)));
+            int canvasH = Math.max(50, this.height - 48 - bottomSectionH - 12);
+            int bottomY = 48 + canvasH + 8;
+            int halfW = (canvasW - 10) / 2;
+
+            DialogueData.Node currentNode = tree.getNode(selectedNodeId);
+            if (currentNode != null) {
+                int listH = bottomSectionH - 38;
+
+                // Choices list scroll
+                if (mouseX >= canvasX && mouseX <= canvasX + halfW && mouseY >= bottomY + 16 && mouseY <= bottomY + bottomSectionH - 22) {
+                    int totalH = currentNode.getChoices().size() * 18;
+                    int maxScroll = Math.max(0, totalH - listH);
+                    if (maxScroll > 0) {
+                        choicesScrollOffset = Math.max(0, Math.min(maxScroll, choicesScrollOffset - (int) (amount * 16)));
+                        return true;
+                    }
+                }
+
+                // Actions list scroll
+                int actionsX = canvasX + halfW + 10;
+                if (mouseX >= actionsX && mouseX <= actionsX + halfW && mouseY >= bottomY + 16 && mouseY <= bottomY + bottomSectionH - 22) {
+                    int totalH = currentNode.getEnterActions().size() * 18;
+                    int maxScroll = Math.max(0, totalH - listH);
+                    if (maxScroll > 0) {
+                        actionsScrollOffset = Math.max(0, Math.min(maxScroll, actionsScrollOffset - (int) (amount * 16)));
+                        return true;
+                    }
+                }
+            }
+        }
+        return super.mouseScrolled(mouseX, mouseY, amount);
     }
 
     @Override
@@ -517,9 +618,9 @@ public class DialogueEditorScreen extends Screen {
             NodePoint np = nodePositions.computeIfAbsent(node.getId(), k -> new NodePoint(60, 60));
             int fromX = panX + np.x + cardW;
 
-            for (int i = 0; i < Math.min(3, node.getChoices().size()); i++) {
+            for (int i = 0; i < node.getChoices().size(); i++) {
                 DialogueData.Choice c = node.getChoices().get(i);
-                int fromY = panY + np.y + 36 + (i * 12);
+                int fromY = panY + np.y + 36 + (Math.min(i, 4) * 12);
 
                 String targetId = c.getTargetNodeId();
                 if ("EXIT".equalsIgnoreCase(targetId) || targetId.isEmpty()) {
@@ -545,7 +646,7 @@ public class DialogueEditorScreen extends Screen {
 
             int sx = panX + np.x;
             int sy = panY + np.y;
-            int cardH = Math.max(68, 44 + Math.min(3, node.getChoices().size()) * 12);
+            int cardH = Math.max(68, 44 + Math.min(4, node.getChoices().size()) * 12);
             boolean isSelected = id.equals(selectedNodeId);
             boolean isStart = id.equals(tree.getStartNodeId()) || "start".equalsIgnoreCase(id);
 
@@ -571,14 +672,17 @@ public class DialogueEditorScreen extends Screen {
             String snippet = textRenderer.trimToWidth(node.getText().replace('\n', ' '), cardW - 14);
             context.drawText(this.textRenderer, "§8«§f" + snippet + "§8»", sx + 6, sy + 18, 0xCCCCCC, false);
 
-            // Outgoing choices
-            for (int i = 0; i < Math.min(3, node.getChoices().size()); i++) {
+            // Outgoing choices (up to 4 shown)
+            for (int i = 0; i < Math.min(4, node.getChoices().size()); i++) {
                 DialogueData.Choice c = node.getChoices().get(i);
                 int cy = sy + 32 + (i * 12);
                 String choiceSummary = (i + 1) + ". " + c.getText();
                 String clipped = textRenderer.trimToWidth(choiceSummary, cardW - 45);
                 context.drawText(this.textRenderer, "§7" + clipped, sx + 6, cy, 0xAAAAAA, false);
                 context.drawText(this.textRenderer, "§b->" + c.getTargetNodeId(), sx + cardW - 38, cy, 0x66CCEE, false);
+            }
+            if (node.getChoices().size() > 4) {
+                context.drawText(this.textRenderer, "§8+ еще " + (node.getChoices().size() - 4), sx + 6, sy + 32 + (4 * 12), 0x777777, false);
             }
 
             // Bottom Edit Button [РЕДАКТИРОВАТЬ]
@@ -614,31 +718,131 @@ public class DialogueEditorScreen extends Screen {
         DialogueData.Node currentNode = tree.getNode(selectedNodeId);
         if (currentNode == null) return;
 
-        int canvasX = 20;
-        int canvasW = this.width - 40;
-        int bottomSectionH = 110;
-        int canvasH = Math.max(60, this.height - 50 - bottomSectionH - 12);
-        int bottomY = 50 + canvasH + 8;
-        int halfW = (canvasW - 14) / 2;
+        int canvasX = 14;
+        int canvasW = this.width - 28;
+        int bottomSectionH = Math.min(130, Math.max(92, (int) (this.height * 0.40f)));
+        int canvasH = Math.max(50, this.height - 48 - bottomSectionH - 12);
+        int bottomY = 48 + canvasH + 8;
+        int halfW = (canvasW - 10) / 2;
 
         // Render Canvas EditBox
         if (canvasEditBox != null) {
             canvasEditBox.render(context, mouseX, mouseY, delta);
         }
 
-        // Section Dividers for bottom choices and actions
-        context.fill(canvasX, bottomY, canvasX + halfW, bottomY + bottomSectionH, 0xFF0E0E0E);
-        context.drawBorder(canvasX, bottomY, halfW, bottomSectionH, 0xFF282828);
-        context.drawText(this.textRenderer, "§7Варианты ответа:", canvasX + 8, bottomY + 4, 0xCCCCCC, false);
+        // Character count indicator (Bottom-right of EditBox)
+        context.drawText(this.textRenderer, currentNode.getText().length() + "/2048", canvasX + canvasW - 55, 48 + canvasH - 11, 0x777777, false);
 
-        int rightSectionX = canvasX + halfW + 14;
-        context.fill(rightSectionX, bottomY, rightSectionX + halfW, bottomY + bottomSectionH, 0xFF0E0E0E);
-        context.drawBorder(rightSectionX, bottomY, halfW, bottomSectionH, 0xFF282828);
-        context.drawText(this.textRenderer, "§7Действия при входе (" + currentNode.getEnterActions().size() + "):", rightSectionX + 8, bottomY + 4, 0xCCCCCC, false);
+        // --- Left Section: Choices ---
+        int choicesX = canvasX;
+        context.fill(choicesX, bottomY, choicesX + halfW, bottomY + bottomSectionH, 0xFF0E0E0E);
+        context.drawBorder(choicesX, bottomY, halfW, bottomSectionH, 0xFF2A2A2A);
+        context.drawText(this.textRenderer, "§6Варианты ответа (" + currentNode.getChoices().size() + "):", choicesX + 6, bottomY + 5, 0xFFFFAA, false);
 
-        if (newChoiceTextField != null) newChoiceTextField.render(context, mouseX, mouseY, 0);
-        if (newChoiceTargetField != null) newChoiceTargetField.render(context, mouseX, mouseY, 0);
-        if (actionValField != null) actionValField.render(context, mouseX, mouseY, 0);
+        int listY = bottomY + 16;
+        int listH = bottomSectionH - 38;
+
+        context.enableScissor(choicesX + 2, listY, choicesX + halfW - 2, listY + listH);
+        if (currentNode.getChoices().isEmpty()) {
+            context.drawText(this.textRenderer, "§8[Нет вариантов, диалог завершится]", choicesX + 8, listY + 8, 0x666666, false);
+        } else {
+            for (int i = 0; i < currentNode.getChoices().size(); i++) {
+                DialogueData.Choice c = currentNode.getChoices().get(i);
+                int rowY = listY + (i * 18) - choicesScrollOffset;
+                if (rowY + 16 < listY || rowY > listY + listH) continue;
+
+                int rowW = halfW - 8;
+                boolean isRowHover = (mouseX >= choicesX + 4 && mouseX <= choicesX + 4 + rowW &&
+                                     mouseY >= rowY && mouseY < rowY + 16 &&
+                                     mouseY >= listY && mouseY <= listY + listH);
+
+                context.fill(choicesX + 4, rowY, choicesX + 4 + rowW, rowY + 16, isRowHover ? 0xFF1C221C : 0xFF141414);
+                context.drawBorder(choicesX + 4, rowY, rowW, 16, isRowHover ? 0xFF354835 : 0xFF242424);
+
+                String num = (i + 1) + ". ";
+                String targetTxt = " -> [" + c.getTargetNodeId() + "]";
+                int targetW = textRenderer.getWidth(targetTxt);
+                int maxTxtW = rowW - 22 - targetW - 8;
+                String clipped = textRenderer.trimToWidth(c.getText(), maxTxtW);
+
+                context.drawText(this.textRenderer, num + clipped, choicesX + 8, rowY + 4, isRowHover ? 0xFFFFFF : 0xCCCCCC, false);
+                context.drawText(this.textRenderer, targetTxt, choicesX + 4 + rowW - 18 - targetW, rowY + 4, 0x66CCEE, false);
+
+                // Delete button [X]
+                boolean isDelHover = isRowHover && (mouseX >= choicesX + 4 + rowW - 16 && mouseX <= choicesX + 4 + rowW - 4 && mouseY >= rowY + 2 && mouseY <= rowY + 14);
+                context.fill(choicesX + 4 + rowW - 16, rowY + 2, choicesX + 4 + rowW - 4, rowY + 14, isDelHover ? 0xFF662222 : 0xFF2E1A1A);
+                context.drawText(this.textRenderer, "x", choicesX + 4 + rowW - 12, rowY + 3, isDelHover ? 0xFFFFAA : 0xEE7777, false);
+            }
+        }
+        context.disableScissor();
+
+        // Choices scrollbar
+        int totalChoicesH = currentNode.getChoices().size() * 18;
+        int maxChoicesScroll = Math.max(0, totalChoicesH - listH);
+        if (maxChoicesScroll > 0) {
+            int sbH = Math.max(10, (int) ((float) listH / totalChoicesH * listH));
+            int sbY = listY + (int) ((float) choicesScrollOffset / maxChoicesScroll * (listH - sbH));
+            int sbX = choicesX + halfW - 4;
+            context.fill(sbX, listY, sbX + 2, listY + listH, 0x44222222);
+            context.fill(sbX, sbY, sbX + 2, sbY + sbH, 0xFF666666);
+        }
+
+        // --- Right Section: Actions ---
+        int actionsX = canvasX + halfW + 10;
+        context.fill(actionsX, bottomY, actionsX + halfW, bottomY + bottomSectionH, 0xFF0E0E0E);
+        context.drawBorder(actionsX, bottomY, halfW, bottomSectionH, 0xFF2A2A2A);
+        context.drawText(this.textRenderer, "§eДействия при входе (" + currentNode.getEnterActions().size() + "):", actionsX + 6, bottomY + 5, 0xFFFFAA, false);
+
+        int actListY = bottomY + 16;
+        int actListH = bottomSectionH - 38;
+
+        context.enableScissor(actionsX + 2, actListY, actionsX + halfW - 2, actListY + actListH);
+        if (currentNode.getEnterActions().isEmpty()) {
+            context.drawText(this.textRenderer, "§8[Нет действий при входе]", actionsX + 8, actListY + 8, 0x666666, false);
+        } else {
+            for (int j = 0; j < currentNode.getEnterActions().size(); j++) {
+                DialogueData.Action a = currentNode.getEnterActions().get(j);
+                int rowY = actListY + (j * 18) - actionsScrollOffset;
+                if (rowY + 16 < actListY || rowY > actListY + actListH) continue;
+
+                int rowW = halfW - 8;
+                boolean isRowHover = (mouseX >= actionsX + 4 && mouseX <= actionsX + 4 + rowW &&
+                                     mouseY >= rowY && mouseY < rowY + 16 &&
+                                     mouseY >= actListY && mouseY <= actListY + actListH);
+
+                context.fill(actionsX + 4, rowY, actionsX + 4 + rowW, rowY + 16, isRowHover ? 0xFF222018 : 0xFF141414);
+                context.drawBorder(actionsX + 4, rowY, rowW, 16, isRowHover ? 0xFF4A4028 : 0xFF242424);
+
+                String badge = "[" + formatActionTypeNameShort(a.getType()) + "] ";
+                context.drawText(this.textRenderer, badge, actionsX + 8, rowY + 4, 0xE5A842, false);
+                int badgeW = textRenderer.getWidth(badge);
+                int maxValW = rowW - 22 - badgeW - 8;
+                String valClipped = textRenderer.trimToWidth(a.getValue(), maxValW);
+                context.drawText(this.textRenderer, valClipped, actionsX + 8 + badgeW, rowY + 4, isRowHover ? 0xFFFFFF : 0xCCCCCC, false);
+
+                // Delete button [X]
+                boolean isDelHover = isRowHover && (mouseX >= actionsX + 4 + rowW - 16 && mouseX <= actionsX + 4 + rowW - 4 && mouseY >= rowY + 2 && mouseY <= rowY + 14);
+                context.fill(actionsX + 4 + rowW - 16, rowY + 2, actionsX + 4 + rowW - 4, rowY + 14, isDelHover ? 0xFF661111 : 0xFF2E1A1A);
+                context.drawText(this.textRenderer, "x", actionsX + 4 + rowW - 12, rowY + 3, isDelHover ? 0xFFFFAA : 0xEE7777, false);
+            }
+        }
+        context.disableScissor();
+
+        // Actions scrollbar
+        int totalActionsH = currentNode.getEnterActions().size() * 18;
+        int maxActionsScroll = Math.max(0, totalActionsH - actListH);
+        if (maxActionsScroll > 0) {
+            int sbH = Math.max(10, (int) ((float) actListH / totalActionsH * actListH));
+            int sbY = actListY + (int) ((float) actionsScrollOffset / maxActionsScroll * (actListH - sbH));
+            int sbX = actionsX + halfW - 4;
+            context.fill(sbX, actListY, sbX + 2, actListY + actListH, 0x44222222);
+            context.fill(sbX, sbY, sbX + 2, sbY + sbH, 0xFF666666);
+        }
+
+        // Render input text fields
+        if (newChoiceTextField != null) newChoiceTextField.render(context, mouseX, mouseY, delta);
+        if (newChoiceTargetField != null) newChoiceTargetField.render(context, mouseX, mouseY, delta);
+        if (actionValField != null) actionValField.render(context, mouseX, mouseY, delta);
     }
 
     @Override
