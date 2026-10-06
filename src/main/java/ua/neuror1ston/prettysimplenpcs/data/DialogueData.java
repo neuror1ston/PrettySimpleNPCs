@@ -141,5 +141,18 @@ public class DialogueData {
         public Node getNode(String nodeId) {
             return nodes.get(nodeId);
         }
+
+        private Map<String, int[]> nodePositions = new HashMap<>();
+
+        public Map<String, int[]> getNodePositions() {
+            if (nodePositions == null) {
+                nodePositions = new HashMap<>();
+            }
+            return nodePositions;
+        }
+
+        public void setNodePositions(Map<String, int[]> nodePositions) {
+            this.nodePositions = nodePositions;
+        }
     }
 }

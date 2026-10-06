@@ -26,6 +26,7 @@ public class MinimalButton extends ClickableWidget {
     private final PressAction onPress;
     private boolean activeState = false;
     private int customBorderColor = 0;
+    private Integer swatchColor = null;
 
     public MinimalButton(int x, int y, int width, int height, Text message, PressAction onPress) {
         super(x, y, width, height, message);
@@ -46,6 +47,14 @@ public class MinimalButton extends ClickableWidget {
 
     public void setCustomBorderColor(int color) {
         this.customBorderColor = color;
+    }
+
+    public void setSwatchColor(Integer color) {
+        this.swatchColor = color;
+    }
+
+    public Integer getSwatchColor() {
+        return swatchColor;
     }
 
     @Override
@@ -83,6 +92,13 @@ public class MinimalButton extends ClickableWidget {
             context.drawBorder(getX() + 1, getY() + 1, getWidth() - 2, getHeight() - 2, 0xFF444444);
         }
 
+        // Swatch rendering if swatchColor is set
+        if (swatchColor != null) {
+            context.fill(getX() + 3, getY() + 3, getX() + getWidth() - 3, getY() + getHeight() - 3, swatchColor);
+            context.drawBorder(getX() + 2, getY() + 2, getWidth() - 4, getHeight() - 4, isHovered ? 0xFFFFFFFF : 0xFF222222);
+            return;
+        }
+
         // 3. Text color: Inactive = Pure WHITE, Active = GREY
         int textColor;
         if (!this.active) {
@@ -93,20 +109,30 @@ public class MinimalButton extends ClickableWidget {
             textColor = 0xFFFFFF; // Inactive: Pure White
         }
 
-        // 4. Safe text rendering with Scissor Box to strictly avoid overflow
-        int availableTextWidth = getWidth() - 8;
-        String rawText = getMessage().getString();
-        String clippedText = textRenderer.trimToWidth(rawText, availableTextWidth);
-        if (clippedText.length() < rawText.length() && clippedText.length() > 3) {
-            clippedText = textRenderer.trimToWidth(rawText, availableTextWidth - textRenderer.getWidth("...")) + "...";
+        // 4. Safe text rendering
+        Text msg = getMessage();
+        String rawText = msg.getString();
+        if (rawText.isEmpty()) return;
+
+        int msgWidth = textRenderer.getWidth(msg);
+        if (msgWidth <= getWidth() - 4) {
+            int textX = getX() + (getWidth() - msgWidth) / 2;
+            int textY = getY() + (getHeight() - 8) / 2;
+            context.drawText(textRenderer, msg, textX, textY, textColor, false);
+        } else {
+            int availableTextWidth = Math.max(4, getWidth() - 8);
+            String clippedText = textRenderer.trimToWidth(rawText, availableTextWidth);
+            if (clippedText.length() < rawText.length() && clippedText.length() > 3) {
+                clippedText = textRenderer.trimToWidth(rawText, availableTextWidth - textRenderer.getWidth("...")) + "...";
+            }
+
+            int textX = getX() + (getWidth() - textRenderer.getWidth(clippedText)) / 2;
+            int textY = getY() + (getHeight() - 8) / 2;
+
+            context.enableScissor(getX() + 2, getY() + 1, getX() + getWidth() - 2, getY() + getHeight() - 1);
+            context.drawText(textRenderer, clippedText, textX, textY, textColor, false);
+            context.disableScissor();
         }
-
-        int textX = getX() + (getWidth() - textRenderer.getWidth(clippedText)) / 2;
-        int textY = getY() + (getHeight() - 8) / 2;
-
-        context.enableScissor(getX() + 2, getY() + 1, getX() + getWidth() - 2, getY() + getHeight() - 1);
-        context.drawText(textRenderer, clippedText, textX, textY, textColor, false);
-        context.disableScissor();
     }
 
     @Override

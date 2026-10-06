@@ -4,6 +4,7 @@ import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.EditBox;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.EditBoxWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
@@ -14,21 +15,22 @@ import ua.neuror1ston.prettysimplenpcs.data.DialogueData;
 import ua.neuror1ston.prettysimplenpcs.data.NpcData;
 import ua.neuror1ston.prettysimplenpcs.network.NpcNetwork;
 
+import java.lang.reflect.Field;
 import java.util.*;
 
 /**
  * Dedicated Narrative Graph & Full-Screen Canvas Dialogue Editor.
  * Features:
  * 1. Interactive moving Graph Map (Карта графа):
- *    - Pannable 2D canvas with mouse drag.
+ *    - Infinite smooth panning (no barriers) and mouse wheel zoom in/out.
+ *    - Persisted node layout coordinates across sessions.
  *    - Node cards showing ID, speech excerpt, and outgoing choices.
  *    - Connecting lines/arrows between choices and target nodes.
  *    - Dragging node cards to organize layout.
- *    - Instant open/edit on double click or button.
  * 2. Giant Multi-line Writing Canvas (Полотно реплики):
- *    - Full-screen multi-line text editor for writing long speeches.
- *    - Compact formatting toolbar (Bold, Italic, Placeholders, Colors).
- *    - Responsive scrollable choices manager with compact add-row at bottom.
+ *    - Full-screen multi-line text editor with precise click-to-position cursor and arbitrary selection.
+ *    - Visible formatting toolbar (Bold, Italic, Placeholders, Colors swatches).
+ *    - Responsive scrollable choices manager with compact pinned add-row and auto-clamp scroll on delete.
  *    - Responsive scrollable actions manager.
  */
 public class DialogueEditorScreen extends Screen {
@@ -41,16 +43,13 @@ public class DialogueEditorScreen extends Screen {
     private String selectedNodeId = "start";
     private boolean savedNotification = false;
 
-    // Graph Map state
-    private int panX = 50;
-    private int panY = 50;
+    // Graph Map state: Pan & Zoom
+    private int panX = 60;
+    private int panY = 60;
+    private float zoomScale = 1.0f;
     private boolean isDraggingMap = false;
-    private double lastDragMouseX = 0;
-    private double lastDragMouseY = 0;
 
     private String draggingNodeId = null;
-    private int dragNodeOffsetX = 0;
-    private int dragNodeOffsetY = 0;
 
     public static class NodePoint {
         public int x;
@@ -60,7 +59,7 @@ public class DialogueEditorScreen extends Screen {
     private final Map<String, NodePoint> nodePositions = new HashMap<>();
 
     // Full Canvas Text Editor widgets
-    private EditBoxWidget canvasEditBox;
+    private CustomEditBoxWidget canvasEditBox;
     private TextFieldWidget newChoiceTextField;
     private TextFieldWidget newChoiceTargetField;
     private TextFieldWidget actionValField;
@@ -71,6 +70,64 @@ public class DialogueEditorScreen extends Screen {
 
     // Graph Map mode widgets
     private TextFieldWidget newGraphNodeField;
+
+    // Reflection hook to fix vanilla Minecraft EditBoxWidget mouse placement bug
+    private static Field EDIT_BOX_FIELD;
+    static {
+        try {
+            for (Field f : EditBoxWidget.class.getDeclaredFields()) {
+                if (f.getType().getName().contains("EditBox")) {
+                    f.setAccessible(true);
+                    EDIT_BOX_FIELD = f;
+                    break;
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public static class CustomEditBoxWidget extends EditBoxWidget {
+        public CustomEditBoxWidget(net.minecraft.client.font.TextRenderer textRenderer, int x, int y, int width, int height, Text placeholder, Text message) {
+            super(textRenderer, x, y, width, height, placeholder, message);
+        }
+
+        @Override
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
+            if (this.isWithinBounds(mouseX, mouseY) && button == 0) {
+                try {
+                    if (EDIT_BOX_FIELD != null) {
+                        EditBox eb = (EditBox) EDIT_BOX_FIELD.get(this);
+                        if (eb != null) {
+                            double innerX = mouseX - this.getX() - 4;
+                            double innerY = mouseY - this.getY() - 4 + this.getScrollY();
+                            eb.setSelecting(Screen.hasShiftDown());
+                            eb.moveCursor(innerX, innerY);
+                            return true;
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
+
+        @Override
+        public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+            if (this.isWithinBounds(mouseX, mouseY) && button == 0) {
+                try {
+                    if (EDIT_BOX_FIELD != null) {
+                        EditBox eb = (EditBox) EDIT_BOX_FIELD.get(this);
+                        if (eb != null) {
+                            double innerX = mouseX - this.getX() - 4;
+                            double innerY = mouseY - this.getY() - 4 + this.getScrollY();
+                            eb.setSelecting(true);
+                            eb.moveCursor(innerX, innerY);
+                            return true;
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+        }
+    }
 
     public DialogueEditorScreen(DialogueData.Tree tree, Screen parentScreen) {
         super(Text.literal("Редактор диалога: " + tree.getId()));
@@ -86,14 +143,26 @@ public class DialogueEditorScreen extends Screen {
             selectedNodeId = tree.getStartNodeId().isEmpty() ? tree.getNodes().keySet().iterator().next() : tree.getStartNodeId();
         }
 
+        loadNodePositions();
+    }
+
+    private void loadNodePositions() {
+        // 1. Try to load saved positions from tree
+        Map<String, int[]> saved = tree.getNodePositions();
+        if (saved != null && !saved.isEmpty()) {
+            for (Map.Entry<String, int[]> entry : saved.entrySet()) {
+                int[] pos = entry.getValue();
+                if (pos != null && pos.length >= 2) {
+                    nodePositions.put(entry.getKey(), new NodePoint(pos[0], pos[1]));
+                }
+            }
+        }
+
+        // 2. Fallback for any newly added nodes that don't have positions yet
         calculateDefaultNodePositions();
     }
 
     private void calculateDefaultNodePositions() {
-        if (!tree.getNodes().containsKey(selectedNodeId)) {
-            selectedNodeId = tree.getStartNodeId().isEmpty() ? tree.getNodes().keySet().iterator().next() : tree.getStartNodeId();
-        }
-
         Set<String> visited = new HashSet<>();
         Queue<String> queue = new LinkedList<>();
         Map<String, Integer> colMap = new HashMap<>();
@@ -138,7 +207,7 @@ public class DialogueEditorScreen extends Screen {
             }
         }
 
-        // Assign default coordinates
+        // Assign default coordinates for unpositioned nodes
         for (String id : tree.getNodes().keySet()) {
             if (!nodePositions.containsKey(id)) {
                 int col = colMap.getOrDefault(id, 0);
@@ -197,7 +266,6 @@ public class DialogueEditorScreen extends Screen {
     }
 
     private void initGraphMapMode() {
-        // Bottom control toolbar on Graph Map
         int barY = this.height - 24;
 
         this.newGraphNodeField = new TextFieldWidget(this.textRenderer, 12, barY, 110, 16, Text.literal("node_id"));
@@ -208,7 +276,9 @@ public class DialogueEditorScreen extends Screen {
             String id = newGraphNodeField.getText().trim();
             if (!id.isEmpty() && !tree.getNodes().containsKey(id)) {
                 tree.getNodes().put(id, new DialogueData.Node(id, "Новая реплика..."));
-                nodePositions.put(id, new NodePoint(-panX + (width / 2) - 80, -panY + (height / 2) - 40));
+                int worldCenterX = (int) ((-panX + (width / 2.0f) - 80) / zoomScale);
+                int worldCenterY = (int) ((-panY + (height / 2.0f) - 40) / zoomScale);
+                nodePositions.put(id, new NodePoint(worldCenterX, worldCenterY));
                 this.selectedNodeId = id;
                 this.init();
             }
@@ -216,8 +286,9 @@ public class DialogueEditorScreen extends Screen {
         this.addDrawableChild(addNodeBtn);
 
         MinimalButton resetViewBtn = MinimalButton.builder(Text.literal("Центрировать"), button -> {
-            this.panX = 50;
-            this.panY = 50;
+            this.panX = 60;
+            this.panY = 60;
+            this.zoomScale = 1.0f;
         }).dimensions(225, barY, 85, 16).build();
         this.addDrawableChild(resetViewBtn);
     }
@@ -229,37 +300,34 @@ public class DialogueEditorScreen extends Screen {
         int canvasX = 14;
         int canvasW = this.width - 28;
 
-        // Toolbar row: Formatting and placeholders (compact buttons to prevent overflow)
+        // Toolbar row: Formatting and placeholders
         int tbY = 28;
         int curX = canvasX;
 
-        // B & I
+        // Bold & Italic with distinct styled letters
         this.addDrawableChild(MinimalButton.builder(Text.literal("§lB"), b -> insertFormat("§l")).dimensions(curX, tbY, 20, 16).build());
         curX += 22;
         this.addDrawableChild(MinimalButton.builder(Text.literal("§oI"), b -> insertFormat("§o")).dimensions(curX, tbY, 20, 16).build());
         curX += 24;
 
         // Placeholders
-        this.addDrawableChild(MinimalButton.builder(Text.literal("%player%"), b -> insertFormat("%player%")).dimensions(curX, tbY, 52, 16).build());
-        curX += 54;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("%npc%"), b -> insertFormat("%npc_name%")).dimensions(curX, tbY, 40, 16).build());
-        curX += 44;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("%player%"), b -> insertFormat("%player%")).dimensions(curX, tbY, 54, 16).build());
+        curX += 56;
+        this.addDrawableChild(MinimalButton.builder(Text.literal("%npc%"), b -> insertFormat("%npc_name%")).dimensions(curX, tbY, 44, 16).build());
+        curX += 46;
 
-        // Colors
+        // Color Swatches (Rendered as crisp colored rectangles)
         int colBtnW = 18;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§6●"), b -> insertFormat("§6")).dimensions(curX, tbY, colBtnW, 16).build());
-        curX += colBtnW + 2;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§e●"), b -> insertFormat("§e")).dimensions(curX, tbY, colBtnW, 16).build());
-        curX += colBtnW + 2;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§a●"), b -> insertFormat("§a")).dimensions(curX, tbY, colBtnW, 16).build());
-        curX += colBtnW + 2;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§c●"), b -> insertFormat("§c")).dimensions(curX, tbY, colBtnW, 16).build());
-        curX += colBtnW + 2;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§7●"), b -> insertFormat("§7")).dimensions(curX, tbY, colBtnW, 16).build());
-        curX += colBtnW + 2;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§f●"), b -> insertFormat("§f")).dimensions(curX, tbY, colBtnW, 16).build());
-        curX += colBtnW + 2;
-        this.addDrawableChild(MinimalButton.builder(Text.literal("§c✕"), b -> insertFormat("§r")).dimensions(curX, tbY, colBtnW, 16).build());
+        addColorSwatch(curX, tbY, colBtnW, 0xFFFFAA00, "§6"); curX += colBtnW + 2; // Gold
+        addColorSwatch(curX, tbY, colBtnW, 0xFFFFFF55, "§e"); curX += colBtnW + 2; // Yellow
+        addColorSwatch(curX, tbY, colBtnW, 0xFF55FF55, "§a"); curX += colBtnW + 2; // Green
+        addColorSwatch(curX, tbY, colBtnW, 0xFFFF5555, "§c"); curX += colBtnW + 2; // Red
+        addColorSwatch(curX, tbY, colBtnW, 0xFFAAAAAA, "§7"); curX += colBtnW + 2; // Gray
+        addColorSwatch(curX, tbY, colBtnW, 0xFFFFFFFF, "§f"); curX += colBtnW + 2; // White
+
+        // Reset color button
+        MinimalButton resetColorBtn = MinimalButton.builder(Text.literal("§c✕"), b -> insertFormat("§r")).dimensions(curX, tbY, colBtnW, 16).build();
+        this.addDrawableChild(resetColorBtn);
 
         // Node Quick Switcher (Right aligned)
         int nodeBtnW = 120;
@@ -277,7 +345,7 @@ public class DialogueEditorScreen extends Screen {
         int bottomSectionH = Math.min(130, Math.max(92, (int) (this.height * 0.40f)));
         int canvasH = Math.max(50, this.height - canvasY - bottomSectionH - 12);
 
-        this.canvasEditBox = new EditBoxWidget(this.textRenderer, canvasX, canvasY, canvasW, canvasH,
+        this.canvasEditBox = new CustomEditBoxWidget(this.textRenderer, canvasX, canvasY, canvasW, canvasH,
                 Text.literal("Введите реплику персонажа..."), Text.literal("Реплика"));
         this.canvasEditBox.setMaxLength(2048);
         this.canvasEditBox.setText(currentNode.getText());
@@ -288,11 +356,25 @@ public class DialogueEditorScreen extends Screen {
         int bottomY = canvasY + canvasH + 8;
         int halfW = (canvasW - 10) / 2;
 
+        // Clamp scroll offsets to avoid being stuck out-of-bounds
+        int choicesListH = bottomSectionH - 38;
+        int maxChoicesScroll = Math.max(0, currentNode.getChoices().size() * 18 - choicesListH);
+        this.choicesScrollOffset = Math.max(0, Math.min(maxChoicesScroll, this.choicesScrollOffset));
+
+        int maxActionsScroll = Math.max(0, currentNode.getEnterActions().size() * 18 - choicesListH);
+        this.actionsScrollOffset = Math.max(0, Math.min(maxActionsScroll, this.actionsScrollOffset));
+
         // Left: Choices List & Add Choice
         initChoicesSection(canvasX, bottomY, halfW, bottomSectionH, currentNode);
 
         // Right: Actions List & Add Action
         initActionsSection(canvasX + halfW + 10, bottomY, halfW, bottomSectionH, currentNode);
+    }
+
+    private void addColorSwatch(int x, int y, int size, int colorRgb, String formatCode) {
+        MinimalButton btn = MinimalButton.builder(Text.empty(), b -> insertFormat(formatCode)).dimensions(x, y, size, 16).build();
+        btn.setSwatchColor(colorRgb);
+        this.addDrawableChild(btn);
     }
 
     private void initChoicesSection(int x, int y, int w, int h, DialogueData.Node currentNode) {
@@ -359,6 +441,21 @@ public class DialogueEditorScreen extends Screen {
 
     private void insertFormat(String code) {
         if (canvasEditBox != null) {
+            try {
+                if (EDIT_BOX_FIELD != null) {
+                    EditBox eb = (EditBox) EDIT_BOX_FIELD.get(canvasEditBox);
+                    if (eb != null) {
+                        eb.replaceSelection(code);
+                        DialogueData.Node node = tree.getNode(selectedNodeId);
+                        if (node != null) {
+                            node.setText(canvasEditBox.getText());
+                        }
+                        return;
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            // Fallback: append to text
             String cur = canvasEditBox.getText();
             String updated = cur + code;
             canvasEditBox.setText(updated);
@@ -383,6 +480,12 @@ public class DialogueEditorScreen extends Screen {
     }
 
     private void saveDialogueToServer() {
+        // Persist node layout coordinates in the tree data
+        tree.getNodePositions().clear();
+        for (Map.Entry<String, NodePoint> entry : nodePositions.entrySet()) {
+            tree.getNodePositions().put(entry.getKey(), new int[]{entry.getValue().x, entry.getValue().y});
+        }
+
         PacketByteBuf buf = new PacketByteBuf(Unpooled.buffer());
         buf.writeString(NpcData.GSON.toJson(tree));
         ClientPlayNetworking.send(NpcNetwork.SAVE_DIALOGUE_C2S, buf);
@@ -392,8 +495,9 @@ public class DialogueEditorScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (activeMode == 0 && mouseY >= 28 && mouseY <= height - 26) {
-            // Check if clicked any node card
+        if (activeMode == 0 && mouseY >= 27 && mouseY <= height - 27) {
+            double worldMouseX = (mouseX - panX) / zoomScale;
+            double worldMouseY = (mouseY - panY) / zoomScale;
             int cardW = 160;
 
             for (Map.Entry<String, DialogueData.Node> entry : tree.getNodes().entrySet()) {
@@ -401,15 +505,16 @@ public class DialogueEditorScreen extends Screen {
                 DialogueData.Node node = entry.getValue();
                 NodePoint np = nodePositions.computeIfAbsent(id, k -> new NodePoint(60, 60));
 
-                int sx = panX + np.x;
-                int sy = panY + np.y;
+                int sx = np.x;
+                int sy = np.y;
                 int cardH = Math.max(68, 44 + Math.min(4, node.getChoices().size()) * 12);
 
-                if (mouseX >= sx && mouseX <= sx + cardW && mouseY >= sy && mouseY <= sy + cardH) {
+                if (worldMouseX >= sx && worldMouseX <= sx + cardW && worldMouseY >= sy && worldMouseY <= sy + cardH) {
                     this.selectedNodeId = id;
 
                     // Delete button [X] at top-right
-                    if (!"start".equalsIgnoreCase(id) && mouseX >= sx + cardW - 18 && mouseX <= sx + cardW - 4 && mouseY >= sy + 4 && mouseY <= sy + 18) {
+                    if (!"start".equalsIgnoreCase(id) && worldMouseX >= sx + cardW - 18 && worldMouseX <= sx + cardW - 4 &&
+                        worldMouseY >= sy + 4 && worldMouseY <= sy + 18) {
                         tree.getNodes().remove(id);
                         nodePositions.remove(id);
                         this.selectedNodeId = tree.getNodes().keySet().iterator().next();
@@ -418,7 +523,7 @@ public class DialogueEditorScreen extends Screen {
                     }
 
                     // Open in canvas editor button
-                    if (mouseY >= sy + cardH - 18 && mouseY <= sy + cardH - 2) {
+                    if (worldMouseY >= sy + cardH - 18 && worldMouseY <= sy + cardH - 2) {
                         this.activeMode = 1;
                         this.init();
                         return true;
@@ -427,18 +532,14 @@ public class DialogueEditorScreen extends Screen {
                     // Card dragging
                     if (button == 0) {
                         draggingNodeId = id;
-                        dragNodeOffsetX = (int) mouseX - sx;
-                        dragNodeOffsetY = (int) mouseY - sy;
                         return true;
                     }
                 }
             }
 
-            // Clicked empty canvas: start panning
-            if (button == 0 || button == 2) {
+            // Clicked empty canvas: start smooth panning
+            if (button == 0 || button == 1 || button == 2) {
                 isDraggingMap = true;
-                lastDragMouseX = mouseX;
-                lastDragMouseY = mouseY;
                 return true;
             }
         } else if (activeMode == 1) {
@@ -463,6 +564,8 @@ public class DialogueEditorScreen extends Screen {
                             // Check delete button [X]
                             if (mouseX >= choicesX + halfW - 22 && mouseX <= choicesX + halfW - 10 && mouseY >= rowY + 2 && mouseY <= rowY + 14) {
                                 currentNode.getChoices().remove(i);
+                                int maxScroll = Math.max(0, currentNode.getChoices().size() * 18 - choicesListH);
+                                choicesScrollOffset = Math.max(0, Math.min(maxScroll, choicesScrollOffset));
                                 this.init();
                                 return true;
                             }
@@ -487,6 +590,8 @@ public class DialogueEditorScreen extends Screen {
                             // Check delete button [X]
                             if (mouseX >= actionsX + halfW - 22 && mouseX <= actionsX + halfW - 10 && mouseY >= rowY + 2 && mouseY <= rowY + 14) {
                                 currentNode.getEnterActions().remove(j);
+                                int maxScroll = Math.max(0, currentNode.getEnterActions().size() * 18 - actListH);
+                                actionsScrollOffset = Math.max(0, Math.min(maxScroll, actionsScrollOffset));
                                 this.init();
                                 return true;
                             }
@@ -507,7 +612,15 @@ public class DialogueEditorScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
-        if (activeMode == 1) {
+        if (activeMode == 0 && mouseY >= 27 && mouseY <= height - 27) {
+            // Smooth zoom centered around mouse cursor
+            float oldZoom = zoomScale;
+            float factor = amount > 0 ? 1.15f : 0.87f;
+            zoomScale = Math.max(0.35f, Math.min(2.5f, zoomScale * factor));
+            panX = (int) (mouseX - (mouseX - panX) * (zoomScale / oldZoom));
+            panY = (int) (mouseY - (mouseY - panY) * (zoomScale / oldZoom));
+            return true;
+        } else if (activeMode == 1) {
             int canvasX = 14;
             int canvasW = this.width - 28;
             int bottomSectionH = Math.min(130, Math.max(92, (int) (this.height * 0.40f)));
@@ -519,25 +632,21 @@ public class DialogueEditorScreen extends Screen {
             if (currentNode != null) {
                 int listH = bottomSectionH - 38;
 
-                // Choices list scroll
+                // Choices list scroll (always clamp without blocking)
                 if (mouseX >= canvasX && mouseX <= canvasX + halfW && mouseY >= bottomY + 16 && mouseY <= bottomY + bottomSectionH - 22) {
                     int totalH = currentNode.getChoices().size() * 18;
                     int maxScroll = Math.max(0, totalH - listH);
-                    if (maxScroll > 0) {
-                        choicesScrollOffset = Math.max(0, Math.min(maxScroll, choicesScrollOffset - (int) (amount * 16)));
-                        return true;
-                    }
+                    choicesScrollOffset = Math.max(0, Math.min(maxScroll, choicesScrollOffset - (int) (amount * 16)));
+                    return true;
                 }
 
-                // Actions list scroll
+                // Actions list scroll (always clamp without blocking)
                 int actionsX = canvasX + halfW + 10;
                 if (mouseX >= actionsX && mouseX <= actionsX + halfW && mouseY >= bottomY + 16 && mouseY <= bottomY + bottomSectionH - 22) {
                     int totalH = currentNode.getEnterActions().size() * 18;
                     int maxScroll = Math.max(0, totalH - listH);
-                    if (maxScroll > 0) {
-                        actionsScrollOffset = Math.max(0, Math.min(maxScroll, actionsScrollOffset - (int) (amount * 16)));
-                        return true;
-                    }
+                    actionsScrollOffset = Math.max(0, Math.min(maxScroll, actionsScrollOffset - (int) (amount * 16)));
+                    return true;
                 }
             }
         }
@@ -550,15 +659,13 @@ public class DialogueEditorScreen extends Screen {
             if (draggingNodeId != null) {
                 NodePoint np = nodePositions.get(draggingNodeId);
                 if (np != null) {
-                    np.x = (int) mouseX - panX - dragNodeOffsetX;
-                    np.y = (int) mouseY - panY - dragNodeOffsetY;
+                    np.x += (int) (deltaX / zoomScale);
+                    np.y += (int) (deltaY / zoomScale);
                     return true;
                 }
             } else if (isDraggingMap) {
-                panX += (int) (mouseX - lastDragMouseX);
-                panY += (int) (mouseY - lastDragMouseY);
-                lastDragMouseX = mouseX;
-                lastDragMouseY = mouseY;
+                panX += (int) deltaX;
+                panY += (int) deltaY;
                 return true;
             }
         }
@@ -596,17 +703,26 @@ public class DialogueEditorScreen extends Screen {
     }
 
     private void renderGraphMap(DrawContext context, int mouseX, int mouseY, float delta) {
-        // Canvas clipping area
         int mapTop = 27;
         int mapBottom = this.height - 27;
         context.enableScissor(0, mapTop, this.width, mapBottom);
 
-        // 1. Render subtle coordinate grid dots
+        context.getMatrices().push();
+        context.getMatrices().translate(panX, panY, 0);
+        context.getMatrices().scale(zoomScale, zoomScale, 1.0f);
+
+        // 1. Render subtle coordinate grid dots in canvas space
         int gridStep = 40;
-        int startX = (panX % gridStep + gridStep) % gridStep;
-        int startY = mapTop + ((panY % gridStep + gridStep) % gridStep);
-        for (int x = startX; x < this.width; x += gridStep) {
-            for (int y = startY; y < mapBottom; y += gridStep) {
+        int minCanvasX = (int) ((-panX) / zoomScale) - 40;
+        int maxCanvasX = (int) ((this.width - panX) / zoomScale) + 40;
+        int minCanvasY = (int) ((mapTop - panY) / zoomScale) - 40;
+        int maxCanvasY = (int) ((mapBottom - panY) / zoomScale) + 40;
+
+        int startX = (minCanvasX / gridStep) * gridStep;
+        int startY = (minCanvasY / gridStep) * gridStep;
+
+        for (int x = startX; x <= maxCanvasX; x += gridStep) {
+            for (int y = startY; y <= maxCanvasY; y += gridStep) {
                 context.fill(x, y, x + 2, y + 2, 0xFF1C1C1C);
             }
         }
@@ -616,23 +732,20 @@ public class DialogueEditorScreen extends Screen {
         for (Map.Entry<String, DialogueData.Node> entry : tree.getNodes().entrySet()) {
             DialogueData.Node node = entry.getValue();
             NodePoint np = nodePositions.computeIfAbsent(node.getId(), k -> new NodePoint(60, 60));
-            int fromX = panX + np.x + cardW;
+            int fromX = np.x + cardW;
 
             for (int i = 0; i < node.getChoices().size(); i++) {
                 DialogueData.Choice c = node.getChoices().get(i);
-                int fromY = panY + np.y + 36 + (Math.min(i, 4) * 12);
+                int fromY = np.y + 36 + (Math.min(i, 4) * 12);
 
                 String targetId = c.getTargetNodeId();
                 if ("EXIT".equalsIgnoreCase(targetId) || targetId.isEmpty()) {
-                    // Draw red exit marker
                     context.fill(fromX, fromY - 1, fromX + 16, fromY + 1, 0xFF993333);
                     context.drawText(this.textRenderer, "§c[ВЫХОД]", fromX + 18, fromY - 4, 0xEE6666, false);
                 } else if (nodePositions.containsKey(targetId)) {
                     NodePoint targetNp = nodePositions.get(targetId);
-                    int toX = panX + targetNp.x;
-                    int toY = panY + targetNp.y + 16;
-
-                    // Direct connection line with arrow
+                    int toX = targetNp.x;
+                    int toY = targetNp.y + 16;
                     drawConnectionLine(context, fromX, fromY, toX, toY);
                 }
             }
@@ -644,13 +757,13 @@ public class DialogueEditorScreen extends Screen {
             DialogueData.Node node = entry.getValue();
             NodePoint np = nodePositions.computeIfAbsent(id, k -> new NodePoint(60, 60));
 
-            int sx = panX + np.x;
-            int sy = panY + np.y;
+            int sx = np.x;
+            int sy = np.y;
             int cardH = Math.max(68, 44 + Math.min(4, node.getChoices().size()) * 12);
             boolean isSelected = id.equals(selectedNodeId);
             boolean isStart = id.equals(tree.getStartNodeId()) || "start".equalsIgnoreCase(id);
 
-            // Card background & borders
+            // Background & borders
             context.fill(sx, sy, sx + cardW, sy + cardH, 0xFF141414);
             context.drawBorder(sx, sy, cardW, cardH, isSelected ? 0xFF888888 : 0xFF353535);
             if (isSelected) {
@@ -663,7 +776,10 @@ public class DialogueEditorScreen extends Screen {
 
             // Delete [X] button
             if (!"start".equalsIgnoreCase(id)) {
-                boolean isDelHover = mouseX >= sx + cardW - 18 && mouseX <= sx + cardW - 4 && mouseY >= sy + 4 && mouseY <= sy + 18;
+                double worldMouseX = (mouseX - panX) / zoomScale;
+                double worldMouseY = (mouseY - panY) / zoomScale;
+                boolean isDelHover = worldMouseX >= sx + cardW - 18 && worldMouseX <= sx + cardW - 4 &&
+                                     worldMouseY >= sy + 4 && worldMouseY <= sy + 18;
                 context.fill(sx + cardW - 16, sy + 4, sx + cardW - 4, sy + 16, isDelHover ? 0xFF661111 : 0xFF220A0A);
                 context.drawText(this.textRenderer, "X", sx + cardW - 13, sy + 6, isDelHover ? 0xFFFFFF : 0xFFAAAA, false);
             }
@@ -687,30 +803,32 @@ public class DialogueEditorScreen extends Screen {
 
             // Bottom Edit Button [РЕДАКТИРОВАТЬ]
             int editBtnY = sy + cardH - 16;
-            boolean isEditHover = mouseX >= sx + 4 && mouseX <= sx + cardW - 4 && mouseY >= editBtnY && mouseY <= editBtnY + 12;
+            double worldMouseX = (mouseX - panX) / zoomScale;
+            double worldMouseY = (mouseY - panY) / zoomScale;
+            boolean isEditHover = worldMouseX >= sx + 4 && worldMouseX <= sx + cardW - 4 &&
+                                  worldMouseY >= editBtnY && worldMouseY <= editBtnY + 12;
             context.fill(sx + 4, editBtnY, sx + cardW - 4, editBtnY + 12, isEditHover ? 0xFF282828 : 0xFF1B1B1B);
             context.drawBorder(sx + 4, editBtnY, cardW - 8, 12, isEditHover ? 0xFF666666 : 0xFF2E2E2E);
             context.drawText(this.textRenderer, "§7[Редактировать]", sx + 34, editBtnY + 2, 0xFFFFFF, false);
         }
 
+        context.getMatrices().pop();
         context.disableScissor();
 
-        // Bottom graph status info
+        // Bottom graph status info with zoom level
         context.fill(0, mapBottom, this.width, this.height, 0xFF0E0E0E);
         context.fill(0, mapBottom, this.width, mapBottom + 1, 0xFF2A2A2A);
-        context.drawText(this.textRenderer, "§8[ЛКМ перетаскивание узлов / полотна, Двойной клик на узел для открытия]", 325, this.height - 20, 0x777777, false);
+        context.drawText(this.textRenderer, "§8[ЛКМ/ПКМ перетаскивание, Колесо: Масштаб " + (int)(zoomScale * 100) + "%]", 300, this.height - 20, 0x777777, false);
 
         if (newGraphNodeField != null) newGraphNodeField.render(context, mouseX, mouseY, delta);
     }
 
     private void drawConnectionLine(DrawContext context, int x1, int y1, int x2, int y2) {
-        // Orthogonal connecting step line
         int midX = x1 + (x2 - x1) / 2;
         context.fill(Math.min(x1, midX), y1 - 1, Math.max(x1, midX), y1 + 1, 0xFF4A6572);
         context.fill(midX - 1, Math.min(y1, y2), midX + 1, Math.max(y1, y2), 0xFF4A6572);
         context.fill(Math.min(midX, x2), y2 - 1, Math.max(midX, x2), y2 + 1, 0xFF4A6572);
 
-        // Arrow head pointing to target node
         context.drawText(this.textRenderer, ">", x2 - 5, y2 - 4, 0xFF88CCFF, false);
     }
 
