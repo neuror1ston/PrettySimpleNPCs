@@ -1,0 +1,9 @@
+{
+  "item.prettysimplenpcs.npc_wand": "NPC Wand",
+  "item.prettysimplenpcs.path_wand": "Path Wand",
+  "entity.prettysimplenpcs.simple_npc": "NPC",
+  "gui.prettysimplenpcs.identity": "Identity",
+  "gui.prettysimplenpcs.navigation": "Navigation",
+  "gui.prettysimplenpcs.dialogues": "Dialogues",
+  "gui.prettysimplenpcs.trade": "Trade"
+}

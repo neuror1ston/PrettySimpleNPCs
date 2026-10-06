@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "prettysimplenpcs",
+  "version": "${version}",
+  "name": "Pretty Simple NPCs",
+  "description": "High-performance RP NPCs for Fabric 1.20.1 powered by PolyNav Core",
+  "authors": [
+    "neuror1ston"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "ua.neuror1ston.prettysimplenpcs.PrettySimpleNpcsMod"
+    ],
+    "client": [
+      "ua.neuror1ston.prettysimplenpcs.client.PrettySimpleNpcsClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.14.21",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "fabric-api": "*",
+    "stubname": ">=0.1.0"
+  }
+}

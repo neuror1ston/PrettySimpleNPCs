@@ -1,0 +1,9 @@
+{
+  "item.prettysimplenpcs.npc_wand": "Палка NPC",
+  "item.prettysimplenpcs.path_wand": "Палка Маршрутов",
+  "entity.prettysimplenpcs.simple_npc": "Персонаж",
+  "gui.prettysimplenpcs.identity": "Внешность",
+  "gui.prettysimplenpcs.navigation": "Навигация",
+  "gui.prettysimplenpcs.dialogues": "Диалоги",
+  "gui.prettysimplenpcs.trade": "Торговля"
+}
