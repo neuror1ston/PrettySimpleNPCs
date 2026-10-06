@@ -1,21 +1,47 @@
-# Gradle
+# Gradle & Build
 .gradle/
 build/
+out/
+.gradle-enterprise/
 
-# Fabric / Minecraft run directory
+# Fabric / Minecraft runtime
 run/
 logs/
+crash-reports/
+hs_err_pid*.log
+replay_pid*.log
 
-# IDE
+# IDE & Editors
 .idea/
 *.iml
-.vscode/
 *.ipr
 *.iws
+.vscode/
+.settings/
+.project/
+.classpath/
+*.sublime-project
+*.sublime-workspace
 
-# OS
+# Operating System
 .DS_Store
 Thumbs.db
+ehthumbs.db
 
-# Logs
+# Temporary & Swap files
+*.tmp
+*.bak
+*.swp
+*~
 *.log
+
+# Local databases & navmesh binaries (outside source)
+*.db
+*.sqlite
+*.sqlite3
+
+# Project specifications, internal design docs & notes
+[sS][pP][eE][cC][iI][fF][iI][cC][aA][tT][iI][oO][nN]*
+SPECIFICATION.md
+specification.md
+scratch/
