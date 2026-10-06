@@ -7,7 +7,7 @@ import net.minecraft.util.math.Vec3d;
 import ua.neuror1ston.prettysimplenpcs.PrettySimpleNpcsMod;
 import ua.neuror1ston.prettysimplenpcs.data.NpcData;
 import ua.neuror1ston.prettysimplenpcs.entity.SimpleNpcEntity;
-import ua.stubname.api.NavMeshAPI;
+import ua.polynav.api.NavMeshAPI;
 
 import java.util.List;
 
@@ -138,7 +138,7 @@ public class NpcAiController {
         } catch (java.util.concurrent.RejectedExecutionException e) {
             PrettySimpleNpcsMod.LOGGER.warn("NavMesh thread pool was not ready. Re-initializing pool...");
             try {
-                ua.stubname.navmesh.pathfinding.AsyncPathProcessor.init(ua.stubname.config.NavMeshConfig.load());
+                ua.polynav.navmesh.pathfinding.AsyncPathProcessor.init(ua.polynav.config.NavMeshConfig.load());
                 NavMeshAPI.navigateTo(npc, target, speed);
             } catch (Exception ignored) {}
         } catch (Exception e) {

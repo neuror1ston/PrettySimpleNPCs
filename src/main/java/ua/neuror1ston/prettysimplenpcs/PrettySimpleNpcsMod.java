@@ -64,7 +64,7 @@ public class PrettySimpleNpcsMod implements ModInitializer {
         // Ensure NavMesh pathfinding thread pool is initialized on every server launch
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             try {
-                ua.stubname.navmesh.pathfinding.AsyncPathProcessor.init(ua.stubname.config.NavMeshConfig.load());
+                ua.polynav.navmesh.pathfinding.AsyncPathProcessor.init(ua.polynav.config.NavMeshConfig.load());
             } catch (Exception e) {
                 LOGGER.warn("NavMesh AsyncPathProcessor startup initialization notice: {}", e.getMessage());
             }

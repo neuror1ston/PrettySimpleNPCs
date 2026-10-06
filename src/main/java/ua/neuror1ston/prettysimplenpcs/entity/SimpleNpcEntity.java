@@ -30,10 +30,10 @@ import ua.neuror1ston.prettysimplenpcs.item.NpcWandItem;
 import ua.neuror1ston.prettysimplenpcs.item.PathWandItem;
 import ua.neuror1ston.prettysimplenpcs.network.NpcNetwork;
 import ua.neuror1ston.prettysimplenpcs.storage.NpcJsonStorage;
-import ua.stubname.api.INavMeshAgent;
-import ua.stubname.entity.NavMeshMoveControl;
-import ua.stubname.entity.NavMeshNavigation;
-import ua.stubname.navmesh.pathfinding.NavPath;
+import ua.polynav.api.INavMeshAgent;
+import ua.polynav.entity.NavMeshMoveControl;
+import ua.polynav.entity.NavMeshNavigation;
+import ua.polynav.navmesh.pathfinding.NavPath;
 
 import java.util.List;
 
@@ -263,7 +263,7 @@ public class SimpleNpcEntity extends PathAwareEntity implements INavMeshAgent {
     @Override
     public void setCurrentNavPath(NavPath path) {
         this.currentNavPath = path;
-        ua.stubname.network.PathNetwork.sendPathToClients(this, path);
+        ua.polynav.network.PathNetwork.sendPathToClients(this, path);
     }
 
     public NavMeshNavigation getNavMeshNavigation() {
