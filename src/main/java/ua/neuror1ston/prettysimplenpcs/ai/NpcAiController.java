@@ -1,13 +1,17 @@
 package ua.neuror1ston.prettysimplenpcs.ai;
 
+import net.minecraft.block.BlockState;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import ua.neuror1ston.prettysimplenpcs.PrettySimpleNpcsMod;
 import ua.neuror1ston.prettysimplenpcs.data.NpcData;
 import ua.neuror1ston.prettysimplenpcs.entity.SimpleNpcEntity;
 import ua.polynav.api.NavMeshAPI;
+import ua.polynav.navmesh.geometry.NavNode;
 
 import java.util.List;
 
@@ -90,18 +94,64 @@ public class NpcAiController {
                 waitTimer = 0;
                 double r = data.getRoamRadius();
                 if (r > 0 && npc.getWorld() instanceof ServerWorld serverWorld) {
-                    double angle = npc.getRandom().nextDouble() * Math.PI * 2;
-                    double dist = Math.sqrt(npc.getRandom().nextDouble()) * r;
-                    double targetX = data.getHomeX() + dist * Math.cos(angle);
-                    double targetZ = data.getHomeZ() + dist * Math.sin(angle);
-                    Vec3d target = new Vec3d(targetX, data.getHomeY(), targetZ);
+                    Vec3d homePos = new Vec3d(data.getHomeX(), data.getHomeY(), data.getHomeZ());
 
-                    safeNavigateTo(target, data.getBaseSpeed());
+                    // 1. First priority: select a verified walkable node on the baked NavMesh
+                    NavNode randomNode = NavMeshAPI.getRandomNodeInRadius(homePos, r, npc.getRandom());
+
+                    Vec3d target = null;
+                    if (randomNode != null) {
+                        target = randomNode.getPos();
+                    } else {
+                        // 2. Fallback: find a safe ground position without clipping into solid blocks
+                        target = findSafeRoamTarget(serverWorld, homePos, r);
+                    }
+
+                    if (target != null) {
+                        safeNavigateTo(target, data.getBaseSpeed());
+                    }
                 }
             }
         } else {
             waitTimer = 0;
         }
+    }
+
+    private Vec3d findSafeRoamTarget(ServerWorld world, Vec3d homePos, double radius) {
+        for (int attempt = 0; attempt < 8; attempt++) {
+            double angle = npc.getRandom().nextDouble() * Math.PI * 2;
+            double dist = Math.sqrt(npc.getRandom().nextDouble()) * radius;
+            double tx = homePos.x + dist * Math.cos(angle);
+            double tz = homePos.z + dist * Math.sin(angle);
+            int blockX = (int) Math.floor(tx);
+            int blockZ = (int) Math.floor(tz);
+            int startY = (int) Math.floor(homePos.y);
+
+            // Scan ±4 blocks vertically around homeY to find solid ground with head clearance
+            for (int dy = 3; dy >= -4; dy--) {
+                BlockPos groundPos = new BlockPos(blockX, startY + dy, blockZ);
+                BlockState groundState = world.getBlockState(groundPos);
+
+                if (groundState.getCollisionShape(world, groundPos).isEmpty() || !groundState.getFluidState().isEmpty()) {
+                    continue;
+                }
+
+                BlockPos footPos = groundPos.up();
+                BlockPos headPos = footPos.up();
+
+                BlockState footState = world.getBlockState(footPos);
+                BlockState headState = world.getBlockState(headPos);
+
+                // Both feet and head levels must be free of solid obstacles
+                if (footState.getCollisionShape(world, footPos).isEmpty() &&
+                    headState.getCollisionShape(world, headPos).isEmpty() &&
+                    footState.getFluidState().isEmpty()) {
+                    double surfaceY = groundPos.getY() + groundState.getCollisionShape(world, groundPos).getMax(Direction.Axis.Y);
+                    return new Vec3d(tx, surfaceY, tz);
+                }
+            }
+        }
+        return null;
     }
 
     private void tickPatrol(NpcData data) {
