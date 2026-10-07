@@ -3,6 +3,8 @@ package ua.neuror1ston.prettysimplenpcs.storage;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.fabricmc.loader.api.FabricLoader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import ua.neuror1ston.prettysimplenpcs.PrettySimpleNpcsMod;
 import ua.neuror1ston.prettysimplenpcs.data.DialogueData;
 import ua.neuror1ston.prettysimplenpcs.data.NpcData;
@@ -20,49 +22,120 @@ import java.util.stream.Stream;
 
 /**
  * Storage manager for persistent declarative JSON configs (NPCs, Dialogues, Trades)
- * with instant hot-reloading support.
+ * with strict per-world isolation and instant hot-reloading support.
  */
 public class NpcJsonStorage {
+    private static final Logger LOGGER = LoggerFactory.getLogger("PrettySimpleNPCs-Storage");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Path ROOT_DIR = FabricLoader.getInstance().getConfigDir().resolve(PrettySimpleNpcsMod.MOD_ID);
-    private static final Path NPCS_DIR = ROOT_DIR.resolve("npcs");
-    private static final Path DIALOGUES_DIR = ROOT_DIR.resolve("dialogues");
-    private static final Path TRADES_DIR = ROOT_DIR.resolve("trades");
-    private static final Path SKINS_DIR = ROOT_DIR.resolve("skins");
+
+    // Global directory in .minecraft/config/prettysimplenpcs/ for default templates and fallback assets
+    private static final Path GLOBAL_DIR = resolveGlobalDir();
+    private static final Path GLOBAL_SKINS_DIR = GLOBAL_DIR.resolve("skins");
+
+    private static Path resolveGlobalDir() {
+        try {
+            if (FabricLoader.getInstance() != null && FabricLoader.getInstance().getConfigDir() != null) {
+                return FabricLoader.getInstance().getConfigDir().resolve(PrettySimpleNpcsMod.MOD_ID);
+            }
+        } catch (Throwable ignored) {}
+        return Path.of("config", PrettySimpleNpcsMod.MOD_ID);
+    }
+
+    // Per-world directories (set when a world save is loaded)
+    private static Path rootDir;
+    private static Path npcsDir;
+    private static Path dialoguesDir;
+    private static Path tradesDir;
+    private static Path skinsDir;
 
     private static final Map<String, NpcData> NPC_CACHE = new ConcurrentHashMap<>();
     private static final Map<String, DialogueData.Tree> DIALOGUE_CACHE = new ConcurrentHashMap<>();
     private static final Map<String, TradeData.TradeMatrix> TRADE_CACHE = new ConcurrentHashMap<>();
 
+    /**
+     * Initializes global templates directory on game start.
+     */
     public static void init() {
+        initGlobalTemplates();
+    }
+
+    public static void initGlobalTemplates() {
         try {
-            Files.createDirectories(NPCS_DIR);
-            Files.createDirectories(DIALOGUES_DIR);
-            Files.createDirectories(TRADES_DIR);
-            Files.createDirectories(SKINS_DIR);
-            reloadAll();
-            createDefaultConfigsIfEmpty();
+            Files.createDirectories(GLOBAL_DIR);
+            Files.createDirectories(GLOBAL_SKINS_DIR);
+            Files.createDirectories(GLOBAL_DIR.resolve("dialogues"));
+            Files.createDirectories(GLOBAL_DIR.resolve("trades"));
         } catch (IOException e) {
-            PrettySimpleNpcsMod.LOGGER.error("Failed to initialize PrettySimpleNPCs storage directories", e);
+            LOGGER.error("Failed to initialize global templates directory", e);
         }
     }
 
+    /**
+     * Initializes storage for a specific world save (e.g. saves/<worldName>/prettysimplenpcs/).
+     */
+    public static synchronized void initForWorld(Path worldSaveDir) {
+        rootDir = worldSaveDir.resolve("prettysimplenpcs");
+        npcsDir = rootDir.resolve("npcs");
+        dialoguesDir = rootDir.resolve("dialogues");
+        tradesDir = rootDir.resolve("trades");
+        skinsDir = rootDir.resolve("skins");
+
+        try {
+            Files.createDirectories(npcsDir);
+            Files.createDirectories(dialoguesDir);
+            Files.createDirectories(tradesDir);
+            Files.createDirectories(skinsDir);
+
+            reloadAll();
+            createDefaultConfigsIfEmpty();
+            LOGGER.info("Initialized per-world NPC storage at {}", rootDir);
+        } catch (IOException e) {
+            LOGGER.error("Failed to initialize per-world storage directories at {}", rootDir, e);
+        }
+    }
+
+    public static synchronized void close() {
+        NPC_CACHE.clear();
+        DIALOGUE_CACHE.clear();
+        TRADE_CACHE.clear();
+        rootDir = null;
+        npcsDir = null;
+        dialoguesDir = null;
+        tradesDir = null;
+        skinsDir = null;
+    }
+
     public static Path getSkinsDir() {
-        return SKINS_DIR;
+        if (skinsDir != null) {
+            return skinsDir;
+        }
+        return GLOBAL_SKINS_DIR;
+    }
+
+    public static Path getNpcsDir() {
+        return npcsDir;
+    }
+
+    public static Path getDialoguesDir() {
+        return dialoguesDir;
+    }
+
+    public static Path getTradesDir() {
+        return tradesDir;
     }
 
     public static synchronized void reloadAll() {
         reloadNpcs();
         reloadDialogues();
         reloadTrades();
-        PrettySimpleNpcsMod.LOGGER.info("Successfully reloaded all NPC data ({} npcs, {} dialogues, {} trades)",
+        LOGGER.info("Successfully reloaded all per-world NPC data ({} npcs, {} dialogues, {} trades)",
                 NPC_CACHE.size(), DIALOGUE_CACHE.size(), TRADE_CACHE.size());
     }
 
     public static synchronized void reloadNpcs() {
         NPC_CACHE.clear();
-        if (!Files.exists(NPCS_DIR)) return;
-        try (Stream<Path> stream = Files.walk(NPCS_DIR)) {
+        if (npcsDir == null || !Files.exists(npcsDir)) return;
+        try (Stream<Path> stream = Files.walk(npcsDir)) {
             stream.filter(Files::isRegularFile).filter(p -> p.toString().endsWith(".json")).forEach(path -> {
                 try (FileReader reader = new FileReader(path.toFile())) {
                     NpcData data = GSON.fromJson(reader, NpcData.class);
@@ -70,18 +143,18 @@ public class NpcJsonStorage {
                         NPC_CACHE.put(data.getId(), data);
                     }
                 } catch (Exception e) {
-                    PrettySimpleNpcsMod.LOGGER.error("Failed to read NPC config: {}", path, e);
+                    LOGGER.error("Failed to read NPC config: {}", path, e);
                 }
             });
         } catch (IOException e) {
-            PrettySimpleNpcsMod.LOGGER.error("Error reading NPCs directory", e);
+            LOGGER.error("Error reading NPCs directory: {}", npcsDir, e);
         }
     }
 
     public static synchronized void reloadDialogues() {
         DIALOGUE_CACHE.clear();
-        if (!Files.exists(DIALOGUES_DIR)) return;
-        try (Stream<Path> stream = Files.walk(DIALOGUES_DIR)) {
+        if (dialoguesDir == null || !Files.exists(dialoguesDir)) return;
+        try (Stream<Path> stream = Files.walk(dialoguesDir)) {
             stream.filter(Files::isRegularFile).filter(p -> p.toString().endsWith(".json")).forEach(path -> {
                 try (FileReader reader = new FileReader(path.toFile())) {
                     DialogueData.Tree tree = GSON.fromJson(reader, DialogueData.Tree.class);
@@ -89,18 +162,18 @@ public class NpcJsonStorage {
                         DIALOGUE_CACHE.put(tree.getId(), tree);
                     }
                 } catch (Exception e) {
-                    PrettySimpleNpcsMod.LOGGER.error("Failed to read dialogue file: {}", path, e);
+                    LOGGER.error("Failed to read dialogue file: {}", path, e);
                 }
             });
         } catch (IOException e) {
-            PrettySimpleNpcsMod.LOGGER.error("Error reading dialogues directory", e);
+            LOGGER.error("Error reading dialogues directory: {}", dialoguesDir, e);
         }
     }
 
     public static synchronized void reloadTrades() {
         TRADE_CACHE.clear();
-        if (!Files.exists(TRADES_DIR)) return;
-        try (Stream<Path> stream = Files.walk(TRADES_DIR)) {
+        if (tradesDir == null || !Files.exists(tradesDir)) return;
+        try (Stream<Path> stream = Files.walk(tradesDir)) {
             stream.filter(Files::isRegularFile).filter(p -> p.toString().endsWith(".json")).forEach(path -> {
                 try (FileReader reader = new FileReader(path.toFile())) {
                     TradeData.TradeMatrix matrix = GSON.fromJson(reader, TradeData.TradeMatrix.class);
@@ -108,22 +181,23 @@ public class NpcJsonStorage {
                         TRADE_CACHE.put(matrix.getId(), matrix);
                     }
                 } catch (Exception e) {
-                    PrettySimpleNpcsMod.LOGGER.error("Failed to read trade matrix file: {}", path, e);
+                    LOGGER.error("Failed to read trade matrix file: {}", path, e);
                 }
             });
         } catch (IOException e) {
-            PrettySimpleNpcsMod.LOGGER.error("Error reading trades directory", e);
+            LOGGER.error("Error reading trades directory: {}", tradesDir, e);
         }
     }
 
     // NPC operations
     public static void saveNpc(NpcData data) {
         NPC_CACHE.put(data.getId(), data);
-        File file = NPCS_DIR.resolve(data.getId() + ".json").toFile();
+        if (npcsDir == null) return;
+        File file = npcsDir.resolve(data.getId() + ".json").toFile();
         try (FileWriter writer = new FileWriter(file)) {
             GSON.toJson(data, writer);
         } catch (IOException e) {
-            PrettySimpleNpcsMod.LOGGER.error("Failed to persist NPC config for {}", data.getId(), e);
+            LOGGER.error("Failed to persist NPC config for {}", data.getId(), e);
         }
     }
 
@@ -137,21 +211,23 @@ public class NpcJsonStorage {
 
     public static boolean deleteNpc(String id) {
         NPC_CACHE.remove(id);
-        File file = NPCS_DIR.resolve(id + ".json").toFile();
+        if (npcsDir == null) return false;
+        File file = npcsDir.resolve(id + ".json").toFile();
         return file.exists() && file.delete();
     }
 
     // Dialogue operations
     public static void saveDialogue(DialogueData.Tree tree) {
         DIALOGUE_CACHE.put(tree.getId(), tree);
-        File file = DIALOGUES_DIR.resolve(tree.getId() + ".json").toFile();
+        if (dialoguesDir == null) return;
+        File file = dialoguesDir.resolve(tree.getId() + ".json").toFile();
         if (file.getParentFile() != null) {
             file.getParentFile().mkdirs();
         }
         try (FileWriter writer = new FileWriter(file)) {
             GSON.toJson(tree, writer);
         } catch (IOException e) {
-            PrettySimpleNpcsMod.LOGGER.error("Failed to persist dialogue for {}", tree.getId(), e);
+            LOGGER.error("Failed to persist dialogue for {}", tree.getId(), e);
         }
     }
 
@@ -166,11 +242,12 @@ public class NpcJsonStorage {
     // Trade operations
     public static void saveTradeMatrix(TradeData.TradeMatrix matrix) {
         TRADE_CACHE.put(matrix.getId(), matrix);
-        File file = TRADES_DIR.resolve(matrix.getId() + ".json").toFile();
+        if (tradesDir == null) return;
+        File file = tradesDir.resolve(matrix.getId() + ".json").toFile();
         try (FileWriter writer = new FileWriter(file)) {
             GSON.toJson(matrix, writer);
         } catch (IOException e) {
-            PrettySimpleNpcsMod.LOGGER.error("Failed to persist trade matrix for {}", matrix.getId(), e);
+            LOGGER.error("Failed to persist trade matrix for {}", matrix.getId(), e);
         }
     }
 
@@ -186,7 +263,7 @@ public class NpcJsonStorage {
         if (DIALOGUE_CACHE.isEmpty()) {
             DialogueData.Tree sampleDialogue = new DialogueData.Tree("sample_innkeeper", "Трактирщик Богдан");
             DialogueData.Node startNode = new DialogueData.Node("start", "Приветствую тебя, путник! Добро пожаловать в нашу таверну. Чего желаешь?");
-            
+
             DialogueData.Choice choiceTrade = new DialogueData.Choice("Покажи, что у тебя есть на продажу.", "trade");
             DialogueData.Action openTradeAct = new DialogueData.Action(DialogueData.Action.ActionType.OPEN_TRADE, "");
             choiceTrade.getActions().add(openTradeAct);

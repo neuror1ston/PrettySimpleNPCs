@@ -53,6 +53,7 @@ public class NpcWandItem extends Item {
             NpcData data = new NpcData(newId);
             data.setName("Новый Житель");
             data.setTitle("Горожанин");
+            data.setDimension(world.getRegistryKey().getValue().toString());
             data.setHomePos(new Vec3d(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5));
             data.setHomeYaw(player.getYaw() + 180.0f); // Face the creator
 

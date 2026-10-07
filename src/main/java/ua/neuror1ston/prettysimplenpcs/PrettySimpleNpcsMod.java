@@ -58,8 +58,8 @@ public class PrettySimpleNpcsMod implements ModInitializer {
         // Entity attributes
         FabricDefaultAttributeRegistry.register(SIMPLE_NPC_ENTITY_TYPE, SimpleNpcEntity.createAttributes());
 
-        // Declarative JSON configs init
-        NpcJsonStorage.init();
+        // Ensure global templates folder exists
+        NpcJsonStorage.initGlobalTemplates();
 
         // Ensure NavMesh pathfinding thread pool is initialized on every server launch
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
@@ -70,12 +70,17 @@ public class PrettySimpleNpcsMod implements ModInitializer {
             }
         });
 
-        // Database Lifecycle
+        // Per-World Database & Storage Lifecycle
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
-            DatabaseManager.init(server.getSavePath(WorldSavePath.ROOT));
+            java.nio.file.Path worldDir = server.getSavePath(WorldSavePath.ROOT);
+            DatabaseManager.init(worldDir);
+            NpcJsonStorage.initForWorld(worldDir);
+            NpcLifecycleManager.onServerStarted(server);
         });
 
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            NpcLifecycleManager.onServerStopping(server);
+            NpcJsonStorage.close();
             DatabaseManager.close();
         });
 

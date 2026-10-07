@@ -58,6 +58,7 @@ public class NpcData {
     private float homeYaw = 0;
     private float homePitch = 0;
     private double roamRadius = 12.0;
+    private String dimension = "minecraft:overworld";
 
     // Patrol settings
     private List<Vec3d> patrolPoints = new ArrayList<>();
@@ -147,6 +148,9 @@ public class NpcData {
 
     public double getRoamRadius() { return roamRadius; }
     public void setRoamRadius(double roamRadius) { this.roamRadius = roamRadius; }
+
+    public String getDimension() { return dimension != null ? dimension : "minecraft:overworld"; }
+    public void setDimension(String dimension) { this.dimension = dimension != null ? dimension : "minecraft:overworld"; }
 
     public List<Vec3d> getPatrolPoints() { return patrolPoints; }
     public void setPatrolPoints(List<Vec3d> patrolPoints) { this.patrolPoints = patrolPoints; }

@@ -134,6 +134,7 @@ public class SimpleNpcEntity extends PathAwareEntity implements INavMeshAgent {
             }
             if (this.cachedData == null && !id.isEmpty()) {
                 this.cachedData = new NpcData(id);
+                this.cachedData.setDimension(this.getWorld().getRegistryKey().getValue().toString());
                 this.cachedData.setHomePos(this.getPos());
                 this.cachedData.setHomeYaw(this.getYaw());
             }
